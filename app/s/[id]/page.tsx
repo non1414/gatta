@@ -1,28 +1,12 @@
 "use client"
 
 import { useParams } from "next/navigation"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
 import { supabase } from "@/app/lib/supabase"
-
-type Member = { id: string; name: string; paid: boolean }
-type SplitRow = {
-  id: string
-  title: string
-  total: number
-  people: number
-  fee_per_person: number
-  event_at: string
-}
-
-type SplitData = {
-  id: string
-  title: string
-  total: number
-  people: number
-  feePerPerson: number
-  eventAtISO: string
-  members: Member[]
-}
+import { useToast } from "@/app/components/Toast"
+import { PaymentProgress } from "@/app/components/PaymentProgress"
+import { MemberList } from "@/app/components/MemberList"
+import type { Member, SplitData } from "@/app/lib/types"
 
 function formatRemaining(ms: number) {
   if (ms <= 0) return "وصل وقت اللقاء 🎉"
@@ -34,6 +18,19 @@ function formatRemaining(ms: number) {
   if (d > 0) return `${d} يوم • ${h} ساعة • ${m} دقيقة`
   if (h > 0) return `${h} ساعة • ${m} دقيقة • ${sec} ثانية`
   return `${m} دقيقة • ${sec} ثانية`
+}
+
+function formatArabicDate(isoString: string) {
+  const date = new Date(isoString)
+  const options: Intl.DateTimeFormatOptions = {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }
+  return date.toLocaleDateString("ar-SA", options)
 }
 
 const isEmptyName = (name: string) => {
@@ -66,15 +63,19 @@ export default function SplitPage() {
   const [data, setData] = useState<SplitData | null>(null)
   const [myName, setMyName] = useState("")
   const [newName, setNewName] = useState("")
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
   const [loading, setLoading] = useState(true)
+  const [confirmingPayment, setConfirmingPayment] = useState(false)
+  const [addingMember, setAddingMember] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+  const { showToast } = useToast()
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  const loadFromSupabase = async () => {
+  const loadFromSupabase = useCallback(async () => {
     setLoading(true)
 
     const { data: split, error: splitErr } = await supabase
@@ -114,12 +115,20 @@ export default function SplitPage() {
     })
 
     setLoading(false)
-  }
+  }, [id])
 
   useEffect(() => {
-    loadFromSupabase()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+    let mounted = true
+    const load = async () => {
+      if (mounted) {
+        await loadFromSupabase()
+      }
+    }
+    load()
+    return () => {
+      mounted = false
+    }
+  }, [loadFromSupabase])
 
   const share = useMemo(() => {
     if (!data) return 0
@@ -136,16 +145,12 @@ export default function SplitPage() {
     return (data.members || []).filter((m) => m.name.trim().length > 0).length
   }, [data])
 
-  const progress = useMemo(() => {
-    if (!data || data.people <= 0) return 0
-    return Math.round((paidCount / data.people) * 100)
-  }, [data, paidCount])
-
+  const eventAtISO = data?.eventAtISO
   const remainingText = useMemo(() => {
-    if (!data?.eventAtISO) return ""
-    const target = new Date(data.eventAtISO).getTime()
+    if (!eventAtISO) return ""
+    const target = new Date(eventAtISO).getTime()
     return formatRemaining(target - now)
-  }, [data?.eventAtISO, now])
+  }, [eventAtISO, now])
 
   const isFull = useMemo(() => {
     if (!data) return false
@@ -155,30 +160,55 @@ export default function SplitPage() {
   const confirmPaid = async () => {
     if (!data) return
     const name = myName.trim()
-    if (!name) return alert("اكتب الاسم أول")
-
-    const lower = name.toLowerCase()
-
-    // 1) لو الاسم موجود: حدّث paid=true
-    const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
-    if (existing) {
-      await supabase.from("members").update({ paid: true }).eq("id", existing.id)
-      setMyName("")
-      await loadFromSupabase()
+    if (!name) {
+      showToast("اكتب الاسم أول", "error")
       return
     }
 
-    // 2) لو الاسم مو موجود: حطيه بأول مقعد فاضي (بدون زيادة العدد)
-    const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية.")
+    setConfirmingPayment(true)
 
-    await supabase
-      .from("members")
-      .update({ name, paid: true })
-      .eq("id", empty.id)
+    try {
+      const lower = name.toLowerCase()
 
-    setMyName("")
-    await loadFromSupabase()
+      const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
+      if (existing) {
+        const { error } = await supabase.from("members").update({ paid: true }).eq("id", existing.id)
+        if (error) {
+          showToast(error.message, "error")
+        } else {
+          showToast("تم تأكيد الدفع", "success")
+        }
+        setMyName("")
+        await loadFromSupabase()
+        setConfirmingPayment(false)
+        return
+      }
+
+      const empty = data.members.find((m) => m.name.trim().length === 0)
+      if (!empty) {
+        showToast("القِطّة اكتملت — ما فيه مقاعد فاضية", "error")
+        setConfirmingPayment(false)
+        return
+      }
+
+      const { error } = await supabase
+        .from("members")
+        .update({ name, paid: true })
+        .eq("id", empty.id)
+
+      if (error) {
+        showToast(error.message, "error")
+      } else {
+        showToast("تم تأكيد الدفع وإضافة الاسم", "success")
+      }
+
+      setMyName("")
+      await loadFromSupabase()
+    } catch {
+      showToast("حدث خطأ غير متوقع", "error")
+    }
+
+    setConfirmingPayment(false)
   }
 
   const togglePaid = async (memberId: string) => {
@@ -187,24 +217,57 @@ export default function SplitPage() {
     if (!m) return
     if (m.name.trim().length === 0) return
 
-    await supabase.from("members").update({ paid: !m.paid }).eq("id", memberId)
-    await loadFromSupabase()
+    setTogglingId(memberId)
+
+    try {
+      const { error } = await supabase.from("members").update({ paid: !m.paid }).eq("id", memberId)
+      if (error) {
+        showToast(error.message, "error")
+      }
+      await loadFromSupabase()
+    } catch {
+      showToast("حدث خطأ غير متوقع", "error")
+    }
+
+    setTogglingId(null)
   }
 
   const addMember = async () => {
     if (!data) return
     const name = newName.trim()
-    if (!name) return alert("اكتب الاسم للإضافة")
+    if (!name) {
+      showToast("اكتب الاسم للإضافة", "error")
+      return
+    }
 
     const exists = data.members.some((m) => m.name.trim().toLowerCase() === name.toLowerCase())
-    if (exists) return alert("الاسم موجود بالفعل")
+    if (exists) {
+      showToast("الاسم موجود بالفعل", "error")
+      return
+    }
 
     const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية.")
+    if (!empty) {
+      showToast("القِطّة اكتملت — ما فيه مقاعد فاضية", "error")
+      return
+    }
 
-    await supabase.from("members").update({ name, paid: false }).eq("id", empty.id)
-    setNewName("")
-    await loadFromSupabase()
+    setAddingMember(true)
+
+    try {
+      const { error } = await supabase.from("members").update({ name, paid: false }).eq("id", empty.id)
+      if (error) {
+        showToast(error.message, "error")
+      } else {
+        showToast("تم إضافة العضو", "success")
+      }
+      setNewName("")
+      await loadFromSupabase()
+    } catch {
+      showToast("حدث خطأ غير متوقع", "error")
+    }
+
+    setAddingMember(false)
   }
 
   if (loading) {
@@ -243,24 +306,13 @@ export default function SplitPage() {
             </div>
           </div>
 
-          <div className="mt-5 space-y-2">
-            <div className="flex justify-between text-sm text-gray-500">
-              <span>المدفوع</span>
-              <span>
-                {paidCount}/{data.people} • {progress}%
-              </span>
-            </div>
-
-            <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full bg-black" style={{ width: `${progress}%` }} />
-            </div>
-
-            <div className="flex justify-between text-sm text-gray-500">
-              <span>المنضمّين</span>
-              <span>
-                {joinedCount}/{data.people} {isFull ? "• اكتملت ✅" : ""}
-              </span>
-            </div>
+          <div className="mt-5">
+            <PaymentProgress
+              paidCount={paidCount}
+              joinedCount={joinedCount}
+              totalPeople={data.people}
+              isFull={isFull}
+            />
           </div>
         </section>
 
@@ -275,10 +327,14 @@ export default function SplitPage() {
             />
             <button
               onClick={confirmPaid}
-              className="bg-black text-white px-5 rounded-xl font-semibold disabled:opacity-50"
-              disabled={!myName.trim()}
+              className="bg-black text-white px-5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              disabled={!myName.trim() || confirmingPayment}
             >
-              تم
+              {confirmingPayment ? (
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                "تم"
+              )}
             </button>
           </div>
           <p className="text-xs text-gray-400 mt-2">
@@ -292,26 +348,11 @@ export default function SplitPage() {
             <span className="text-xs text-gray-400">اضغط على الحالة للتبديل</span>
           </div>
 
-          <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
-            {data.members.map((m, index) => {
-              const isEmpty = m.name.trim().length === 0
-              return (
-                <button
-                  key={m.id}
-                  onClick={() => togglePaid(m.id)}
-                  disabled={isEmpty}
-                  className={`w-full flex items-center justify-between border rounded-xl px-4 py-3 text-right ${
-                    isEmpty ? "opacity-60 cursor-not-allowed" : "hover:bg-gray-50"
-                  }`}
-                >
-                  <span className="font-medium">
-                    {isEmpty ? `مقعد متاح (${index + 1})` : m.name}
-                  </span>
-                  <span className="text-xl">{isEmpty ? "+" : m.paid ? "✅" : "⏳"}</span>
-                </button>
-              )
-            })}
-          </div>
+          <MemberList
+            members={data.members}
+            togglingId={togglingId}
+            onToggle={togglePaid}
+          />
         </section>
 
         <section className="border rounded-2xl p-5 sm:p-6">
@@ -325,10 +366,14 @@ export default function SplitPage() {
             />
             <button
               onClick={addMember}
-              className="bg-black text-white px-5 rounded-xl font-semibold disabled:opacity-50"
-              disabled={isFull}
+              className="bg-black text-white px-5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              disabled={isFull || addingMember}
             >
-              إضافة
+              {addingMember ? (
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                "إضافة"
+              )}
             </button>
           </div>
           {isFull && <p className="text-xs text-gray-400 mt-2">القِطّة اكتملت ✅</p>}
@@ -337,10 +382,11 @@ export default function SplitPage() {
         <button
           onClick={() => {
             const url = window.location.href
+            const formattedDate = formatArabicDate(data.eventAtISO)
             navigator.clipboard.writeText(
-              `هذا رابط القِطّة 👇\nاكتب الاسم واضغط (تأكيد الدفع) بعد التحويل\nموعد اللقاء: ${data.eventAtISO}\n${url}`
+              `هذا رابط القِطّة 👇\nاكتب الاسم واضغط (تأكيد الدفع) بعد التحويل\nموعد اللقاء: ${formattedDate}\n${url}`
             )
-            alert("تم نسخ رسالة المشاركة ✅")
+            showToast("تم نسخ رسالة المشاركة", "success")
           }}
           className="w-full bg-black text-white rounded-2xl py-3 font-semibold"
         >

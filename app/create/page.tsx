@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { supabase } from "../lib/supabase"
+import { useToast } from "../components/Toast"
 
 type Member = { id: string; name: string; paid: boolean }
 type SplitData = {
@@ -30,6 +31,8 @@ export default function CreatePage() {
   const [total, setTotal] = useState("2400")
   const [people, setPeople] = useState("8")
   const [eventAtISO, setEventAtISO] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const { showToast } = useToast()
 
   const feePerPerson = 2
 
@@ -53,74 +56,89 @@ export default function CreatePage() {
   }, [totalNum, peopleNum])
 
 const createLink = async () => {
-        if (!title.trim()) return alert("اكتب اسم المناسبة")
+    if (!title.trim()) {
+      showToast("اكتب اسم المناسبة", "error")
+      return
+    }
 
     const t = Number(total)
     const p = Number(people)
 
-    if (!Number.isFinite(t) || t <= 0) return alert("أدخل مبلغ صحيح")
-    if (!Number.isFinite(p) || p < 2) return alert("عدد الأشخاص لازم يكون 2 أو أكثر")
+    if (!Number.isFinite(t) || t <= 0) {
+      showToast("أدخل مبلغ صحيح", "error")
+      return
+    }
+    if (!Number.isFinite(p) || p < 2) {
+      showToast("عدد الأشخاص لازم يكون 2 أو أكثر", "error")
+      return
+    }
 
     const finalPeople = clampInt(Math.floor(p), 2, 50)
-    if (finalPeople !== Math.floor(p)) {
-      // لو كتب رقم كبير جدًا أو كسور
-      // ما نقطع عليه، بس نضبطه
+
+    if (!eventAtISO) {
+      showToast("حدد تاريخ ووقت اللقاء", "error")
+      return
     }
 
-    if (!eventAtISO) return alert("حدد تاريخ ووقت اللقاء")
+    setIsSubmitting(true)
 
-    const id = crypto.randomUUID()
+    try {
+      const id = crypto.randomUUID()
 
-    // ✅ مقاعد فاضية: name=""
-    const members: Member[] = Array.from({ length: finalPeople }, () => ({
-      id: crypto.randomUUID(),
-      name: "",
-      paid: false,
-    }))
+      const members: Member[] = Array.from({ length: finalPeople }, () => ({
+        id: crypto.randomUUID(),
+        name: "",
+        paid: false,
+      }))
 
-    const data: SplitData = {
-      title: title.trim(),
-      total: t,
-      people: finalPeople,
-      feePerPerson,
-      eventAtISO: toLocalISO(eventAtISO),
-      members,
-      createdAt: Date.now(),
+      const data: SplitData = {
+        title: title.trim(),
+        total: t,
+        people: finalPeople,
+        feePerPerson,
+        eventAtISO: toLocalISO(eventAtISO),
+        members,
+        createdAt: Date.now(),
+      }
+
+      const { error: splitErr } = await supabase.from("splits").insert({
+        id: id,
+        title: data.title,
+        total: data.total,
+        people: data.people,
+        fee_per_person: data.feePerPerson,
+        event_at: data.eventAtISO,
+        created_at: data.createdAt,
+      })
+
+      if (splitErr) {
+        showToast(splitErr.message, "error")
+        setIsSubmitting(false)
+        return
+      }
+
+      const rows = data.members.map((m) => ({
+        id: m.id,
+        split_id: id,
+        name: m.name,
+        paid: m.paid,
+        created_at: Date.now(),
+      }))
+
+      const { error: memErr } = await supabase.from("members").insert(rows)
+
+      if (memErr) {
+        showToast(memErr.message, "error")
+        setIsSubmitting(false)
+        return
+      }
+
+      showToast("تم إنشاء الرابط بنجاح", "success")
+      window.location.href = `/s/${id}`
+    } catch {
+      showToast("حدث خطأ غير متوقع", "error")
+      setIsSubmitting(false)
     }
-
-    // حفظ القِطّة
-const { error: splitErr } = await supabase.from("splits").insert({
-  id: id,
-  title: data.title,
-  total: data.total,
-  people: data.people,
-  fee_per_person: data.feePerPerson,
-  event_at: data.eventAtISO,
-  created_at: data.createdAt,
-})
-
-if (splitErr) {
-  alert(splitErr.message)
-  return
-}
-
-// حفظ الأعضاء
-const rows = data.members.map((m) => ({
-  id: m.id,
-  split_id: id,
-  name: m.name,
-  paid: m.paid,
-  created_at: Date.now(),
-}))
-
-const { error: memErr } = await supabase.from("members").insert(rows)
-
-if (memErr) {
-  alert(memErr.message)
-  return
-}
-
-window.location.href = `/s/${id}`
   }
 
   return (
@@ -201,9 +219,17 @@ window.location.href = `/s/${id}`
 
           <button
             onClick={createLink}
-            className="w-full bg-black text-white rounded-2xl py-3 font-semibold"
+            disabled={isSubmitting}
+            className="w-full bg-black text-white rounded-2xl py-3 font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            إنشاء الرابط
+            {isSubmitting ? (
+              <>
+                <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                جاري الإنشاء...
+              </>
+            ) : (
+              "إنشاء الرابط"
+            )}
           </button>
 
           <p className="text-xs text-gray-400 text-center">
