@@ -2,17 +2,26 @@
 
 import { useParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
-import { supabase } from "@/app/lib/supabase" // عدّلي المسار إذا ملفك بمكان ثاني
+import { supabase } from "@/app/lib/supabase"
 
 type Member = { id: string; name: string; paid: boolean }
+type SplitRow = {
+  id: string
+  title: string
+  total: number
+  people: number
+  fee_per_person: number
+  event_at: string
+}
+
 type SplitData = {
+  id: string
   title: string
   total: number
   people: number
   feePerPerson: number
   eventAtISO: string
   members: Member[]
-  createdAt: number
 }
 
 function formatRemaining(ms: number) {
@@ -27,8 +36,27 @@ function formatRemaining(ms: number) {
   return `${m} دقيقة • ${sec} ثانية`
 }
 
-function clampInt(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n))
+const isEmptyName = (name: string) => {
+  const t = (name ?? "").trim()
+  return t.length === 0 || t.toUpperCase() === "EMPTY"
+}
+
+function normalizeMembers(people: number, members: Member[]) {
+  const finalPeople = Math.max(2, Math.min(50, Math.floor(people || 0)))
+
+  // رتّبي بحيث اللي عنده اسم يجي أول، ثم المقاعد الفاضية
+  const cleaned = (members || []).map((m) => ({
+    id: m.id,
+    name: isEmptyName(m.name) ? "" : String(m.name ?? ""),
+    paid: Boolean(m.paid),
+  }))
+
+  const padded: Member[] = Array.from({ length: finalPeople }, (_, i) => {
+    const m = cleaned[i]
+    return m ? m : { id: crypto.randomUUID(), name: "", paid: false }
+  })
+
+  return padded
 }
 
 export default function SplitPage() {
@@ -36,96 +64,60 @@ export default function SplitPage() {
   const id = params.id as string
 
   const [data, setData] = useState<SplitData | null>(null)
-  const [loading, setLoading] = useState(true)
   const [myName, setMyName] = useState("")
   const [newName, setNewName] = useState("")
   const [now, setNow] = useState(Date.now())
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  const loadFromDb = async () => {
-    try {
-      setLoading(true)
+  const loadFromSupabase = async () => {
+    setLoading(true)
 
-      // 1) split
-      const { data: split, error: splitErr } = await supabase
-        .from("splits")
-        .select("id,title,total,people,fee_per_person,event_at,created_at")
-        .eq("id", id)
-        .single()
+    const { data: split, error: splitErr } = await supabase
+      .from("splits")
+      .select("id,title,total,people,fee_per_person,event_at")
+      .eq("id", id)
+      .single()
 
-      if (splitErr || !split) {
-        setData(null)
-        return
-      }
-
-      const people = clampInt(Number(split.people ?? 0), 2, 50)
-
-      // 2) members
-      const { data: membersRows, error: memErr } = await supabase
-        .from("members")
-        .select("id,name,paid")
-        .eq("split_id", id)
-        .order("created_at", { ascending: true })
-
-      if (memErr) {
-        setData(null)
-        return
-      }
-
-      let members: Member[] = (membersRows ?? []).map((m: any) => ({
-        id: String(m.id),
-        name: String(m.name ?? ""),
-        paid: Boolean(m.paid),
-      }))
-
-      // تأكيد طول القائمة = people (لو ناقص نكمله بمقاعد فاضية داخل DB)
-      if (members.length < people) {
-        const missing = people - members.length
-        const toInsert = Array.from({ length: missing }, () => ({
-          split_id: id,
-          name: "",
-          paid: false,
-          created_at: Date.now(),
-        }))
-        await supabase.from("members").insert(toInsert)
-
-        const { data: membersRows2 } = await supabase
-          .from("members")
-          .select("id,name,paid")
-          .eq("split_id", id)
-          .order("created_at", { ascending: true })
-
-        members = (membersRows2 ?? []).slice(0, people).map((m: any) => ({
-          id: String(m.id),
-          name: String(m.name ?? ""),
-          paid: Boolean(m.paid),
-        }))
-      } else {
-        members = members.slice(0, people)
-      }
-
-      const next: SplitData = {
-        title: String(split.title ?? ""),
-        total: Number(split.total ?? 0),
-        people,
-        feePerPerson: Number(split.fee_per_person ?? 0),
-        eventAtISO: String(split.event_at ?? ""),
-        members,
-        createdAt: Number(split.created_at ?? Date.now()),
-      }
-
-      setData(next)
-    } finally {
+    if (splitErr || !split) {
+      setData(null)
       setLoading(false)
+      return
     }
+
+    const { data: membersRows, error: memErr } = await supabase
+      .from("members")
+      .select("id,name,paid")
+      .eq("split_id", id)
+      .order("created_at", { ascending: true })
+
+    if (memErr) {
+      setData(null)
+      setLoading(false)
+      return
+    }
+
+    const members = normalizeMembers(split.people, (membersRows || []) as Member[])
+
+    setData({
+      id: split.id,
+      title: split.title,
+      total: Number(split.total ?? 0),
+      people: Number(split.people ?? 0),
+      feePerPerson: Number(split.fee_per_person ?? 0),
+      eventAtISO: String(split.event_at ?? ""),
+      members,
+    })
+
+    setLoading(false)
   }
 
   useEffect(() => {
-    loadFromDb()
+    loadFromSupabase()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -160,20 +152,6 @@ export default function SplitPage() {
     return data.members.every((m) => m.name.trim().length > 0)
   }, [data])
 
-  const updateMember = async (memberId: string, patch: Partial<Member>) => {
-    if (!data) return
-    const nextMembers = data.members.map((m) => (m.id === memberId ? { ...m, ...patch } : m))
-    setData({ ...data, members: nextMembers })
-
-    await supabase
-      .from("members")
-      .update({
-        name: patch.name,
-        paid: patch.paid,
-      })
-      .eq("id", memberId)
-  }
-
   const confirmPaid = async () => {
     if (!data) return
     const name = myName.trim()
@@ -181,29 +159,36 @@ export default function SplitPage() {
 
     const lower = name.toLowerCase()
 
-    // إذا الاسم موجود، علّمه مدفوع
+    // 1) لو الاسم موجود: حدّث paid=true
     const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
     if (existing) {
-      await updateMember(existing.id, { paid: true })
+      await supabase.from("members").update({ paid: true }).eq("id", existing.id)
       setMyName("")
+      await loadFromSupabase()
       return
     }
 
-    // إذا الاسم غير موجود: عبّيه في أول مقعد فاضي
+    // 2) لو الاسم مو موجود: حطيه بأول مقعد فاضي (بدون زيادة العدد)
     const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية لإضافة اسم جديد.")
+    if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية.")
 
-    await updateMember(empty.id, { name, paid: true })
+    await supabase
+      .from("members")
+      .update({ name, paid: true })
+      .eq("id", empty.id)
+
     setMyName("")
+    await loadFromSupabase()
   }
 
   const togglePaid = async (memberId: string) => {
     if (!data) return
-    const member = data.members.find((m) => m.id === memberId)
-    if (!member) return
-    if (member.name.trim().length === 0) return
+    const m = data.members.find((x) => x.id === memberId)
+    if (!m) return
+    if (m.name.trim().length === 0) return
 
-    await updateMember(memberId, { paid: !member.paid })
+    await supabase.from("members").update({ paid: !m.paid }).eq("id", memberId)
+    await loadFromSupabase()
   }
 
   const addMember = async () => {
@@ -217,8 +202,9 @@ export default function SplitPage() {
     const empty = data.members.find((m) => m.name.trim().length === 0)
     if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية.")
 
-    await updateMember(empty.id, { name, paid: false })
+    await supabase.from("members").update({ name, paid: false }).eq("id", empty.id)
     setNewName("")
+    await loadFromSupabase()
   }
 
   if (loading) {
@@ -232,7 +218,7 @@ export default function SplitPage() {
   if (!data) {
     return (
       <main className="min-h-screen flex items-center justify-center p-8 text-center">
-        الرابط غير متاح — تأكدي من صحة الرابط أو أن الرابط موجود في قاعدة البيانات
+        الرابط غير متاح — تأكدي من صحة الرابط أو أنشئي رابط جديد
       </main>
     )
   }
