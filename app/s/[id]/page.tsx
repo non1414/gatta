@@ -2,15 +2,16 @@
 
 import { useParams } from "next/navigation"
 import { useEffect, useMemo, useState } from "react"
+import { supabase } from "@/app/lib/supabase" // عدّلي المسار إذا ملفك بمكان ثاني
 
 type Member = { id: string; name: string; paid: boolean }
 type SplitData = {
   title: string
   total: number
-  people: number // هذا هو عدد المقاعد (Slots)
+  people: number
   feePerPerson: number
   eventAtISO: string
-  members: Member[] // لازم دائمًا يكون طولها = people
+  members: Member[]
   createdAt: number
 }
 
@@ -26,81 +27,8 @@ function formatRemaining(ms: number) {
   return `${m} دقيقة • ${sec} ثانية`
 }
 
-const isPlaceholderName = (name: string) => /^شخص\s+\d+$/i.test(name.trim())
-
-function makeEmptySeat(): Member {
-  return { id: crypto.randomUUID(), name: "", paid: false }
-}
-
-function normalize(parsed: any): SplitData | null {
-  if (!parsed) return null
-
-  // people = عدد المقاعد (Slots)
-  const rawPeople = Number(parsed.people)
-  const people = Number.isFinite(rawPeople) ? Math.max(Math.floor(rawPeople), 0) : 0
-
-  // 1) اجيب members لو موجودة
-  let members: Member[] = Array.isArray(parsed.members) ? parsed.members : []
-
-  // إذا ما فيه members (روابط قديمة جدًا) -> أنشئ مقاعد فاضية بعدد people
-  if (!Array.isArray(parsed.members)) {
-    const count = people
-    members = Array.from({ length: count }, () => ({
-      id: crypto.randomUUID(),
-      name: "",
-      paid: false,
-    }))
-  }
-
-  // 2) تنظيف النسخ القديمة:
-  // - "شخص 1/2/3" تعتبر مقعد فاضي إذا ما كان مدفوع
-  members = members.map((m: any) => {
-    const name = String(m?.name ?? "")
-    const paid = Boolean(m?.paid)
-    const isOldPlaceholder = /^شخص\s+\d+$/i.test(name.trim())
-
-    // placeholder القديم يتحول لمقعد فاضي (إذا مو مدفوع)
-    if (!paid && isOldPlaceholder) {
-      return { id: m?.id || crypto.randomUUID(), name: "", paid: false }
-    }
-
-    // احتراز: إذا الاسم فاضي، خليه غير مدفوع
-    if (name.trim().length === 0) {
-      return { id: m?.id || crypto.randomUUID(), name: "", paid: false }
-    }
-
-    return {
-      id: m?.id || crypto.randomUUID(),
-      name,
-      paid,
-    }
-  })
-
-  // 3) تأكيد أن عدد المقاعد ثابت
-  // اذا people موجود نثبته، وإذا ما هو موجود نأخذه من members
-  // مع حد أدنى 2 وحد أقصى 50 (MVP)
-  const finalPeople = Math.max(2, Math.min(50, Math.max(people, members.length)))
-
-  // 4) خلي طول القائمة = finalPeople (أي مقاعد ناقصة نضيفها فاضية)
-  const normalizedMembers: Member[] = Array.from({ length: finalPeople }, (_, i) => {
-    const m = members[i]
-    return m
-      ? { id: m.id || crypto.randomUUID(), name: m.name ?? "", paid: Boolean(m.paid) }
-      : { id: crypto.randomUUID(), name: "", paid: false }
-  })
-
-  // 5) رجع SplitData مضبوط
-  const next: SplitData = {
-    title: String(parsed.title ?? ""),
-    total: Number(parsed.total ?? 0),
-    people: finalPeople,
-    feePerPerson: Number(parsed.feePerPerson ?? 0),
-    eventAtISO: String(parsed.eventAtISO ?? ""),
-    members: normalizedMembers,
-    createdAt: Number(parsed.createdAt ?? Date.now()),
-  }
-
-  return next
+function clampInt(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n))
 }
 
 export default function SplitPage() {
@@ -108,6 +36,7 @@ export default function SplitPage() {
   const id = params.id as string
 
   const [data, setData] = useState<SplitData | null>(null)
+  const [loading, setLoading] = useState(true)
   const [myName, setMyName] = useState("")
   const [newName, setNewName] = useState("")
   const [now, setNow] = useState(Date.now())
@@ -117,21 +46,86 @@ export default function SplitPage() {
     return () => clearInterval(t)
   }, [])
 
-  const save = (next: SplitData) => {
-    setData(next)
-    localStorage.setItem(id, JSON.stringify(next))
-  }
+  const loadFromDb = async () => {
+    try {
+      setLoading(true)
 
-  const load = () => {
-    const saved = localStorage.getItem(id)
-    if (!saved) return
-    const parsed = normalize(JSON.parse(saved))
-    if (!parsed) return
-    save(parsed)
+      // 1) split
+      const { data: split, error: splitErr } = await supabase
+        .from("splits")
+        .select("id,title,total,people,fee_per_person,event_at,created_at")
+        .eq("id", id)
+        .single()
+
+      if (splitErr || !split) {
+        setData(null)
+        return
+      }
+
+      const people = clampInt(Number(split.people ?? 0), 2, 50)
+
+      // 2) members
+      const { data: membersRows, error: memErr } = await supabase
+        .from("members")
+        .select("id,name,paid")
+        .eq("split_id", id)
+        .order("created_at", { ascending: true })
+
+      if (memErr) {
+        setData(null)
+        return
+      }
+
+      let members: Member[] = (membersRows ?? []).map((m: any) => ({
+        id: String(m.id),
+        name: String(m.name ?? ""),
+        paid: Boolean(m.paid),
+      }))
+
+      // تأكيد طول القائمة = people (لو ناقص نكمله بمقاعد فاضية داخل DB)
+      if (members.length < people) {
+        const missing = people - members.length
+        const toInsert = Array.from({ length: missing }, () => ({
+          split_id: id,
+          name: "",
+          paid: false,
+          created_at: Date.now(),
+        }))
+        await supabase.from("members").insert(toInsert)
+
+        const { data: membersRows2 } = await supabase
+          .from("members")
+          .select("id,name,paid")
+          .eq("split_id", id)
+          .order("created_at", { ascending: true })
+
+        members = (membersRows2 ?? []).slice(0, people).map((m: any) => ({
+          id: String(m.id),
+          name: String(m.name ?? ""),
+          paid: Boolean(m.paid),
+        }))
+      } else {
+        members = members.slice(0, people)
+      }
+
+      const next: SplitData = {
+        title: String(split.title ?? ""),
+        total: Number(split.total ?? 0),
+        people,
+        feePerPerson: Number(split.fee_per_person ?? 0),
+        eventAtISO: String(split.event_at ?? ""),
+        members,
+        createdAt: Number(split.created_at ?? Date.now()),
+      }
+
+      setData(next)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
-    load()
+    loadFromDb()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
@@ -166,7 +160,21 @@ export default function SplitPage() {
     return data.members.every((m) => m.name.trim().length > 0)
   }, [data])
 
-  const confirmPaid = () => {
+  const updateMember = async (memberId: string, patch: Partial<Member>) => {
+    if (!data) return
+    const nextMembers = data.members.map((m) => (m.id === memberId ? { ...m, ...patch } : m))
+    setData({ ...data, members: nextMembers })
+
+    await supabase
+      .from("members")
+      .update({
+        name: patch.name,
+        paid: patch.paid,
+      })
+      .eq("id", memberId)
+  }
+
+  const confirmPaid = async () => {
     if (!data) return
     const name = myName.trim()
     if (!name) return alert("اكتب الاسم أول")
@@ -174,84 +182,57 @@ export default function SplitPage() {
     const lower = name.toLowerCase()
 
     // إذا الاسم موجود، علّمه مدفوع
-    const idx = data.members.findIndex(
-      (m) => m.name.trim().toLowerCase() === lower
-    )
-
-    const next: SplitData = { ...data, members: [...data.members] }
-
-    if (idx >= 0) {
-      next.members[idx] = { ...next.members[idx], paid: true }
-      save(next)
+    const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
+    if (existing) {
+      await updateMember(existing.id, { paid: true })
       setMyName("")
       return
     }
 
-    // إذا الاسم غير موجود: عبّيه في أول مقعد فاضي (بدون زيادة عدد المقاعد)
-    const emptyIndex = next.members.findIndex((m) => m.name.trim().length === 0)
-    if (emptyIndex === -1) {
-      return alert("القِطّة اكتملت — ما فيه مقاعد فاضية لإضافة اسم جديد.")
-    }
+    // إذا الاسم غير موجود: عبّيه في أول مقعد فاضي
+    const empty = data.members.find((m) => m.name.trim().length === 0)
+    if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية لإضافة اسم جديد.")
 
-    next.members[emptyIndex] = {
-      ...next.members[emptyIndex],
-      name,
-      paid: true,
-    }
-
-    save(next)
+    await updateMember(empty.id, { name, paid: true })
     setMyName("")
   }
 
-  const togglePaid = (memberId: string) => {
+  const togglePaid = async (memberId: string) => {
     if (!data) return
     const member = data.members.find((m) => m.id === memberId)
     if (!member) return
-
-    // لا تسمحين بتبديل حالة مقعد فاضي
     if (member.name.trim().length === 0) return
 
-    const next = {
-      ...data,
-      members: data.members.map((m) =>
-        m.id === memberId ? { ...m, paid: !m.paid } : m
-      ),
-    }
-    save(next)
+    await updateMember(memberId, { paid: !member.paid })
   }
 
-  const addMember = () => {
+  const addMember = async () => {
     if (!data) return
     const name = newName.trim()
     if (!name) return alert("اكتب الاسم للإضافة")
 
-    const exists = data.members.some(
-      (m) => m.name.trim().toLowerCase() === name.toLowerCase()
-    )
+    const exists = data.members.some((m) => m.name.trim().toLowerCase() === name.toLowerCase())
     if (exists) return alert("الاسم موجود بالفعل")
 
-    const next: SplitData = { ...data, members: [...data.members] }
+    const empty = data.members.find((m) => m.name.trim().length === 0)
+    if (!empty) return alert("القِطّة اكتملت — ما فيه مقاعد فاضية.")
 
-    // عبّي أول مقعد فاضي (بدون زيادة slots)
-    const emptyIndex = next.members.findIndex((m) => m.name.trim().length === 0)
-    if (emptyIndex === -1) {
-      return alert("القِطّة اكتملت — ما فيه مقاعد فاضية.")
-    }
-
-    next.members[emptyIndex] = {
-      ...next.members[emptyIndex],
-      name,
-      paid: false,
-    }
-
-    save(next)
+    await updateMember(empty.id, { name, paid: false })
     setNewName("")
+  }
+
+  if (loading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-8 text-center">
+        جاري تحميل الرابط…
+      </main>
+    )
   }
 
   if (!data) {
     return (
       <main className="min-h-screen flex items-center justify-center p-8 text-center">
-        الرابط غير متاح — أنشئ رابط جديد من صفحة الإنشاء
+        الرابط غير متاح — تأكدي من صحة الرابط أو أن الرابط موجود في قاعدة البيانات
       </main>
     )
   }
@@ -325,7 +306,6 @@ export default function SplitPage() {
             <span className="text-xs text-gray-400">اضغط على الحالة للتبديل</span>
           </div>
 
-          {/* مهم: سكرول حتى ما تكتم الصفحة */}
           <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
             {data.members.map((m, index) => {
               const isEmpty = m.name.trim().length === 0

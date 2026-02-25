@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { supabase } from "../lib/supabase"
 
 type Member = { id: string; name: string; paid: boolean }
 type SplitData = {
@@ -51,8 +52,8 @@ export default function CreatePage() {
     return String(Math.ceil(t / p) + feePerPerson)
   }, [totalNum, peopleNum])
 
-  const createLink = () => {
-    if (!title.trim()) return alert("اكتب اسم المناسبة")
+const createLink = async () => {
+        if (!title.trim()) return alert("اكتب اسم المناسبة")
 
     const t = Number(total)
     const p = Number(people)
@@ -87,13 +88,39 @@ export default function CreatePage() {
       createdAt: Date.now(),
     }
 
-    localStorage.setItem(id, JSON.stringify(data))
+    // حفظ القِطّة
+const { error: splitErr } = await supabase.from("splits").insert({
+  id: id,
+  title: data.title,
+  total: data.total,
+  people: data.people,
+  fee_per_person: data.feePerPerson,
+  event_at: data.eventAtISO,
+  created_at: data.createdAt,
+})
 
-    // ✅ حفظ بسيط: هذا الشخص هو "المنسّق" لهذه القِطّة
-    // نستخدمها لاحقًا لإظهار أدوات إضافية للمنسق داخل صفحة /s/[id]
-    localStorage.setItem(`creator:${id}`, "true")
+if (splitErr) {
+  alert(splitErr.message)
+  return
+}
 
-    window.location.href = `/s/${id}`
+// حفظ الأعضاء
+const rows = data.members.map((m) => ({
+  id: m.id,
+  split_id: id,
+  name: m.name,
+  paid: m.paid,
+  created_at: Date.now(),
+}))
+
+const { error: memErr } = await supabase.from("members").insert(rows)
+
+if (memErr) {
+  alert(memErr.message)
+  return
+}
+
+window.location.href = `/s/${id}`
   }
 
   return (
