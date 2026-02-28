@@ -2,11 +2,14 @@
 
 import { ToastProvider } from "./Toast"
 import { ErrorBoundary } from "./ErrorBoundary"
+import { ThemeProvider } from "./ThemeProvider"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ErrorBoundary>
-      <ToastProvider>{children}</ToastProvider>
+      <ThemeProvider>
+        <ToastProvider>{children}</ToastProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   )
 }

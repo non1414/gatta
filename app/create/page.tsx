@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { useToast } from "../components/Toast"
 import { Footer } from "../components/Footer"
+import { PageHeader } from "../components/PageHeader"
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -14,9 +15,9 @@ function toLocalISO(datetimeLocalValue: string) {
 }
 
 export default function CreatePage() {
-  const [title, setTitle] = useState("")
-  const [total, setTotal] = useState("")
-  const [people, setPeople] = useState("")
+  const [title, setTitle]     = useState("")
+  const [total, setTotal]     = useState("")
+  const [people, setPeople]   = useState("")
   const [eventAt, setEventAt] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const { showToast } = useToast()
@@ -38,65 +39,31 @@ export default function CreatePage() {
   }, [totalNum, peopleNum])
 
   const createLink = async () => {
-    if (!title.trim()) {
-      showToast("اكتب اسم المناسبة", "error")
-      return
-    }
-    if (totalNum <= 0) {
-      showToast("أدخل مبلغاً صحيحاً", "error")
-      return
-    }
-    if (peopleNum < 2) {
-      showToast("عدد الأشخاص لازم يكون 2 على الأقل", "error")
-      return
-    }
-    if (!eventAt) {
-      showToast("حدّد تاريخ ووقت اللقاء", "error")
-      return
-    }
+    if (!title.trim()) { showToast("اكتب اسم المناسبة", "error"); return }
+    if (totalNum <= 0)  { showToast("أدخل مبلغاً صحيحاً", "error"); return }
+    if (peopleNum < 2)  { showToast("عدد الأشخاص لازم يكون 2 على الأقل", "error"); return }
+    if (!eventAt)       { showToast("حدّد تاريخ ووقت اللقاء", "error"); return }
 
     setIsSubmitting(true)
 
     try {
-      const id = crypto.randomUUID()
-
+      const id      = crypto.randomUUID()
       const members = Array.from({ length: peopleNum }, () => ({
-        id: crypto.randomUUID(),
-        name: "",
-        paid: false,
+        id: crypto.randomUUID(), name: "", paid: false,
       }))
 
       const { error: splitErr } = await supabase.from("splits").insert({
-        id,
-        title: title.trim(),
-        total: totalNum,
-        people: peopleNum,
-        fee_per_person: 0,
-        event_at: toLocalISO(eventAt),
-        created_at: Date.now(),
+        id, title: title.trim(), total: totalNum, people: peopleNum,
+        fee_per_person: 0, event_at: toLocalISO(eventAt), created_at: Date.now(),
       })
 
-      if (splitErr) {
-        showToast(splitErr.message, "error")
-        setIsSubmitting(false)
-        return
-      }
+      if (splitErr) { showToast(splitErr.message, "error"); setIsSubmitting(false); return }
 
       const { error: memErr } = await supabase.from("members").insert(
-        members.map((m) => ({
-          id: m.id,
-          split_id: id,
-          name: m.name,
-          paid: m.paid,
-          created_at: Date.now(),
-        }))
+        members.map((m) => ({ id: m.id, split_id: id, name: m.name, paid: m.paid, created_at: Date.now() }))
       )
 
-      if (memErr) {
-        showToast(memErr.message, "error")
-        setIsSubmitting(false)
-        return
-      }
+      if (memErr) { showToast(memErr.message, "error"); setIsSubmitting(false); return }
 
       showToast("تم إنشاء الرابط", "success")
       window.location.href = `/s/${id}`
@@ -107,11 +74,13 @@ export default function CreatePage() {
   }
 
   return (
-    <main className="min-h-dvh px-4 py-10 sm:py-14">
-      <div className="mx-auto max-w-md space-y-6">
+    <main className="min-h-dvh px-4 py-8 sm:py-12">
+      <div className="mx-auto max-w-md">
 
-        {/* Header */}
-        <div className="text-center space-y-2">
+        <PageHeader />
+
+        {/* Heading */}
+        <div className="text-center space-y-2 mb-6">
           <h1 className="text-2xl font-bold">إنشاء رابط قِطّة</h1>
           <p className="text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
             أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.
@@ -121,7 +90,6 @@ export default function CreatePage() {
         {/* Form card */}
         <div className="card space-y-5">
 
-          {/* Title */}
           <div>
             <label className="label">اسم المناسبة</label>
             <input
@@ -132,7 +100,6 @@ export default function CreatePage() {
             />
           </div>
 
-          {/* Total + People */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">المبلغ الإجمالي (ريال)</label>
@@ -153,13 +120,10 @@ export default function CreatePage() {
                 inputMode="numeric"
                 placeholder="8"
               />
-              <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>
-                الحد الأقصى: 50
-              </p>
+              <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>الحد الأقصى: 50</p>
             </div>
           </div>
 
-          {/* Event date */}
           <div>
             <label className="label">موعد اللقاء</label>
             <input
@@ -173,34 +137,26 @@ export default function CreatePage() {
             </p>
           </div>
 
-          {/* Preview */}
+          {/* Live preview */}
           {previewShare && (
             <div
               className="rounded-2xl p-4 flex items-center justify-between"
-              style={{
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid var(--border)",
-              }}
+              style={{ background: "rgba(255,107,61,0.07)", border: "1px solid rgba(255,107,61,0.18)" }}
             >
-              <span className="text-sm" style={{ color: "var(--text-2)" }}>
-                حصة الشخص
-              </span>
-              <span className="font-bold text-lg">
+              <span className="text-sm" style={{ color: "var(--text-2)" }}>حصة الشخص</span>
+              <span className="font-bold text-lg" style={{ color: "var(--primary)" }}>
                 {previewShare}{" "}
-                <span className="text-sm font-normal" style={{ color: "var(--text-2)" }}>
-                  ريال
-                </span>
+                <span className="text-sm font-normal" style={{ color: "var(--text-2)" }}>ريال</span>
               </span>
             </div>
           )}
 
-          {/* Submit */}
           <button className="btn btn-white" onClick={createLink} disabled={isSubmitting}>
             {isSubmitting ? <span className="spinner" /> : "إنشاء الرابط"}
           </button>
         </div>
-
       </div>
+
       <Footer />
     </main>
   )
