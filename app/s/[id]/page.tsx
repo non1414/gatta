@@ -83,14 +83,19 @@ export default function SplitPage() {
     return () => clearInterval(t)
   }, [])
 
-  // Initial load
+  // Initial load (up to 3 attempts, 800 ms apart)
   const loadFromSupabase = useCallback(async () => {
     setLoading(true)
-    const { data: split, error: splitErr } = await supabase
-      .from("splits")
-      .select("*")
-      .eq("id", id)
-      .single()
+
+    let split = null
+    let splitErr = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise<void>((r) => setTimeout(r, 800))
+      const res = await supabase.from("splits").select("*").eq("id", id).single()
+      splitErr = res.error
+      split    = res.data
+      if (!splitErr && split) break
+    }
 
     if (splitErr || !split) { setData(null); setLoading(false); return }
 
@@ -272,7 +277,12 @@ export default function SplitPage() {
       })
       .eq("id", id)
     if (error) {
-      showToast(error.message, "error")
+      // column doesn't exist yet — migration not run
+      if (error.code === "42703" || error.message?.includes("bank_name") || error.message?.includes("iban")) {
+        showToast("شغّلي migration في Supabase أولاً (add_bank_details.sql)", "error")
+      } else {
+        showToast(error.message, "error")
+      }
     } else {
       const updated = { bankName: bankEdits.name.trim(), iban: bankEdits.iban.trim() }
       setData((prev) => prev ? { ...prev, ...updated } : prev)

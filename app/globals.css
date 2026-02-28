@@ -73,6 +73,7 @@ html {
 }
 
 body {
+  overflow-x: hidden;
   background-color: var(--bg);
   background-image:
     radial-gradient(ellipse 70% 45% at 10% 5%, rgba(255, 106, 61, 0.09) 0%, transparent 55%),

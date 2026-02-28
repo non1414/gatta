@@ -57,10 +57,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
-const toastStyles: Record<ToastType, { bg: string; border: string }> = {
-  success: { bg: "rgba(34, 197, 94, 0.12)",  border: "rgba(34, 197, 94, 0.28)" },
-  error:   { bg: "rgba(255, 107, 74, 0.12)", border: "rgba(255, 107, 74, 0.28)" },
-  info:    { bg: "#1c1c1e",                  border: "#26262A" },
+const toastStyles: Record<ToastType, { bg: string; border: string; color: string }> = {
+  success: { bg: "#1A3D2B", border: "rgba(74, 222, 128, 0.45)", color: "#FFFFFF" },
+  error:   { bg: "#3D1212", border: "rgba(248, 113, 113, 0.45)", color: "#FFFFFF" },
+  info:    { bg: "#1C1C1E", border: "#3A3A3C",                   color: "#F2F2F2" },
 }
 
 const toastIcon: Record<ToastType, string> = {
@@ -75,7 +75,7 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
     return () => clearTimeout(timer)
   }, [onClose])
 
-  const { bg, border } = toastStyles[toast.type]
+  const { bg, border, color } = toastStyles[toast.type]
 
   return (
     <div
@@ -89,8 +89,8 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
         display: "flex",
         alignItems: "center",
         gap: "10px",
-        boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
-        color: "#f2f2f2",
+        boxShadow: "0 6px 24px rgba(0,0,0,0.35)",
+        color,
         fontSize: "14px",
         direction: "rtl",
       }}
@@ -102,7 +102,7 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
         style={{
           background: "none",
           border: "none",
-          color: "rgba(242,242,242,0.5)",
+          color: "rgba(255,255,255,0.55)",
           cursor: "pointer",
           padding: "0 4px",
           fontSize: "16px",
