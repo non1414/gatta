@@ -14,13 +14,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "قِطّة — نظّم قِطّتك بسهولة",
-  description: "أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع من دفع ومن لم يدفع. مجاناً تماماً.",
+  title: "قَطّة — نظّم قَطّتك بسهولة",
+  description: "أنشئ رابط قَطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.",
   openGraph: {
-    title: "قِطّة — نظّم قِطّتك بسهولة",
-    description: "أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.",
+    title: "قَطّة — نظّم قَطّتك بسهولة",
+    description: "أنشئ رابط قَطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.",
+    url: "https://gatta-chi.vercel.app",
     locale: "ar_SA",
     type: "website",
+    images: [
+      {
+        url: "https://gatta-chi.vercel.app/og-gatta.png",
+        width: 1200,
+        height: 630,
+        alt: "قَطّة — نظّم قَطّتك بسهولة",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "قَطّة — نظّم قَطّتك بسهولة",
+    description: "أنشئ رابط قَطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.",
+    images: ["https://gatta-chi.vercel.app/og-gatta.png"],
   },
 };
 
