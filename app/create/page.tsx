@@ -67,6 +67,7 @@ export default function CreatePage() {
       if (memErr) { showToast(memErr.message, "error"); setIsSubmitting(false); return }
 
       showToast("تم إنشاء الرابط", "success")
+      localStorage.setItem(`gatta_org_${id}`, "1")
       window.location.href = `/s/${id}`
     } catch {
       showToast("حدث خطأ غير متوقع", "error")

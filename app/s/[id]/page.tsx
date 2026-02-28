@@ -47,7 +47,6 @@ function normalizeMembers(people: number, members: Member[]) {
   )
 }
 
-// Patch a single member in state by id
 function patchMember(prev: SplitData | null, id: string, patch: Partial<Member>): SplitData | null {
   if (!prev) return prev
   return { ...prev, members: prev.members.map((m) => m.id === id ? { ...m, ...patch } : m) }
@@ -57,15 +56,26 @@ export default function SplitPage() {
   const params = useParams()
   const id = params.id as string
 
-  const [data, setData]                     = useState<SplitData | null>(null)
-  const [myName, setMyName]                 = useState("")
-  const [newName, setNewName]               = useState("")
-  const [now, setNow]                       = useState(() => Date.now())
-  const [loading, setLoading]               = useState(true)
+  const [data, setData]                           = useState<SplitData | null>(null)
+  const [myName, setMyName]                       = useState("")
+  const [newName, setNewName]                     = useState("")
+  const [now, setNow]                             = useState(() => Date.now())
+  const [loading, setLoading]                     = useState(true)
   const [confirmingPayment, setConfirmingPayment] = useState(false)
-  const [addingMember, setAddingMember]     = useState(false)
-  const [togglingId, setTogglingId]         = useState<string | null>(null)
+  const [addingMember, setAddingMember]           = useState(false)
+  const [togglingId, setTogglingId]               = useState<string | null>(null)
   const { showToast } = useToast()
+
+  // ── Organizer detection (localStorage flag set at creation) ───
+  const [isOrganizer, setIsOrganizer] = useState(false)
+  useEffect(() => {
+    setIsOrganizer(localStorage.getItem(`gatta_org_${id}`) === "1")
+  }, [id])
+
+  // ── Bank transfer editing state ────────────────────────────────
+  const [bankEdits, setBankEdits]   = useState({ name: "", iban: "" })
+  const [editingBank, setEditingBank] = useState(false)
+  const [savingBank, setSavingBank]   = useState(false)
 
   // Countdown tick
   useEffect(() => {
@@ -78,7 +88,7 @@ export default function SplitPage() {
     setLoading(true)
     const { data: split, error: splitErr } = await supabase
       .from("splits")
-      .select("id,title,total,people,event_at")
+      .select("id,title,total,people,event_at,bank_name,iban")
       .eq("id", id)
       .single()
 
@@ -92,14 +102,20 @@ export default function SplitPage() {
 
     if (memErr) { setData(null); setLoading(false); return }
 
+    const bankName = String(split.bank_name ?? "")
+    const iban     = String(split.iban ?? "")
+
     setData({
       id: split.id,
       title: split.title,
       total: Number(split.total ?? 0),
       people: Number(split.people ?? 0),
       eventAtISO: String(split.event_at ?? ""),
+      bankName,
+      iban,
       members: normalizeMembers(split.people, (membersRows || []) as Member[]),
     })
+    setBankEdits({ name: bankName, iban })
     setLoading(false)
   }, [id])
 
@@ -154,12 +170,11 @@ export default function SplitPage() {
     const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
 
     if (existing) {
-      // Optimistic
       setData((prev) => patchMember(prev, existing.id, { paid: true }))
       setMyName("")
       const { error } = await supabase.from("members").update({ paid: true }).eq("id", existing.id)
       if (error) {
-        setData((prev) => patchMember(prev, existing.id, { paid: false })) // rollback
+        setData((prev) => patchMember(prev, existing.id, { paid: false }))
         showToast(error.message, "error")
       } else {
         showToast("تم تأكيد الدفع ✅", "success")
@@ -170,18 +185,17 @@ export default function SplitPage() {
 
     const empty = data.members.find((m) => m.name.trim().length === 0)
     if (!empty) {
-      showToast("القِطّة اكتملت — ما فيه مقاعد فاضية", "error")
+      showToast("القَطّة اكتملت — ما فيه مقاعد فاضية", "error")
       setConfirmingPayment(false)
       return
     }
 
-    // Optimistic
     setData((prev) => patchMember(prev, empty.id, { name, paid: true }))
     setMyName("")
     try {
       const { error } = await supabase.from("members").update({ name, paid: true }).eq("id", empty.id)
       if (error) {
-        setData((prev) => patchMember(prev, empty.id, { name: "", paid: false })) // rollback
+        setData((prev) => patchMember(prev, empty.id, { name: "", paid: false }))
         showToast(error.message, "error")
       } else {
         showToast("تم تأكيد الدفع وإضافة الاسم ✅", "success")
@@ -201,11 +215,11 @@ export default function SplitPage() {
 
     setTogglingId(memberId)
     const newPaid = !m.paid
-    setData((prev) => patchMember(prev, memberId, { paid: newPaid })) // optimistic
+    setData((prev) => patchMember(prev, memberId, { paid: newPaid }))
     try {
       const { error } = await supabase.from("members").update({ paid: newPaid }).eq("id", memberId)
       if (error) {
-        setData((prev) => patchMember(prev, memberId, { paid: m.paid })) // rollback
+        setData((prev) => patchMember(prev, memberId, { paid: m.paid }))
         showToast(error.message, "error")
       }
     } catch {
@@ -215,7 +229,7 @@ export default function SplitPage() {
     setTogglingId(null)
   }
 
-  // ── Add member ────────────────────────────────────────────────
+  // ── Add member (organizer only) ───────────────────────────────
   const addMember = async () => {
     if (!data) return
     const name = newName.trim()
@@ -225,7 +239,7 @@ export default function SplitPage() {
       showToast("الاسم موجود بالفعل", "error"); return
     }
     const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) { showToast("القِطّة اكتملت — ما فيه مقاعد فاضية", "error"); return }
+    if (!empty) { showToast("القَطّة اكتملت — ما فيه مقاعد فاضية", "error"); return }
 
     // Optimistic — member appears immediately
     setData((prev) => patchMember(prev, empty.id, { name, paid: false }))
@@ -234,10 +248,10 @@ export default function SplitPage() {
     try {
       const { error } = await supabase.from("members").update({ name, paid: false }).eq("id", empty.id)
       if (error) {
-        setData((prev) => patchMember(prev, empty.id, { name: "" })) // rollback
+        setData((prev) => patchMember(prev, empty.id, { name: "" }))
         showToast(error.message, "error")
       } else {
-        showToast("تم إضافة العضو", "success")
+        showToast("تم إضافة الشخص", "success")
       }
     } catch {
       setData((prev) => patchMember(prev, empty.id, { name: "" }))
@@ -246,17 +260,46 @@ export default function SplitPage() {
     setAddingMember(false)
   }
 
+  // ── Save bank details (organizer only) ────────────────────────
+  const saveBankDetails = async () => {
+    if (!data) return
+    setSavingBank(true)
+    const { error } = await supabase
+      .from("splits")
+      .update({
+        bank_name: bankEdits.name.trim() || null,
+        iban:      bankEdits.iban.trim()  || null,
+      })
+      .eq("id", id)
+    if (error) {
+      showToast(error.message, "error")
+    } else {
+      const updated = { bankName: bankEdits.name.trim(), iban: bankEdits.iban.trim() }
+      setData((prev) => prev ? { ...prev, ...updated } : prev)
+      setEditingBank(false)
+      showToast("تم حفظ بيانات التحويل ✅", "success")
+    }
+    setSavingBank(false)
+  }
+
+  // ── Copy IBAN ─────────────────────────────────────────────────
+  const copyIban = () => {
+    navigator.clipboard.writeText(data?.iban ?? "")
+    showToast("تم نسخ رقم الحساب", "success")
+  }
+
   // ── Share helpers ─────────────────────────────────────────────
   const buildShareText = () => {
     if (!data) return ""
     const url = window.location.href
     return [
-      `هذا رابط القِطّة 👇`,
+      `هذا رابط القَطّة 👇`,
       ``,
       `المناسبة: ${data.title}`,
       `المبلغ الإجمالي: ${data.total} ريال`,
       `حصة الشخص: ${share.toFixed(2)} ريال`,
       `موعد اللقاء: ${formatArabicDate(data.eventAtISO)}`,
+      ...(data.iban ? [``, `رقم الآيبان: ${data.iban}`] : []),
       ``,
       `اكتب اسمك واضغط "تأكيد الدفع" بعد إتمام التحويل`,
       url,
@@ -271,7 +314,7 @@ export default function SplitPage() {
   const handleWhatsApp = async () => {
     const text = buildShareText()
     if (navigator.share) {
-      try { await navigator.share({ title: `قِطّة: ${data?.title}`, text }); return } catch { /* fallthrough */ }
+      try { await navigator.share({ title: `قَطّة: ${data?.title}`, text }); return } catch { /* fallthrough */ }
     }
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank")
   }
@@ -349,6 +392,121 @@ export default function SplitPage() {
           />
         </div>
 
+        {/* ── Bank transfer card ──────────────────────────────── */}
+        {(isOrganizer || !!data.iban) && (
+          <div className="card space-y-4">
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h2 className="section-title" style={{ marginBottom: 0 }}>
+                التحويل إلى حساب المنسّق
+              </h2>
+              {isOrganizer && !editingBank && (
+                <button
+                  onClick={() => setEditingBank(true)}
+                  style={{
+                    fontSize: 13, fontWeight: 600,
+                    color: "var(--primary)",
+                    background: "none", border: "none",
+                    cursor: "pointer", padding: 0,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  تعديل
+                </button>
+              )}
+            </div>
+
+            {editingBank ? (
+              /* Edit mode — organizer only */
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label className="label">اسم البنك</label>
+                  <input
+                    className="field"
+                    value={bankEdits.name}
+                    onChange={(e) => setBankEdits((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="مثال: بنك الراجحي"
+                  />
+                </div>
+                <div>
+                  <label className="label">رقم الآيبان (IBAN)</label>
+                  <input
+                    className="field"
+                    value={bankEdits.iban}
+                    onChange={(e) => setBankEdits((p) => ({ ...p, iban: e.target.value }))}
+                    placeholder="SA00 0000 0000 0000 0000 0000"
+                    style={{ direction: "ltr", textAlign: "left", letterSpacing: "0.5px" }}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn btn-white"
+                    onClick={saveBankDetails}
+                    disabled={savingBank}
+                    style={{ flex: 1 }}
+                  >
+                    {savingBank ? <span className="spinner" /> : "حفظ"}
+                  </button>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setEditingBank(false)
+                      setBankEdits({ name: data.bankName, iban: data.iban })
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* View mode — everyone */
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {data.bankName && (
+                  <div>
+                    <p className="label">البنك</p>
+                    <p style={{ fontSize: 15, fontWeight: 500, color: "var(--text-1)" }}>
+                      {data.bankName}
+                    </p>
+                  </div>
+                )}
+
+                {data.iban ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div>
+                      <p className="label">رقم الآيبان</p>
+                      <p style={{
+                        fontSize: 15, fontWeight: 600,
+                        color: "var(--text-1)",
+                        direction: "ltr", textAlign: "left",
+                        letterSpacing: "0.8px",
+                        fontFamily: "monospace",
+                      }}>
+                        {data.iban}
+                      </p>
+                    </div>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={copyIban}
+                      style={{ height: 48, fontSize: 14 }}
+                    >
+                      نسخ رقم الحساب
+                    </button>
+                  </div>
+                ) : isOrganizer ? (
+                  <p style={{ fontSize: 13, color: "var(--text-3)" }}>
+                    لم تُضف بيانات التحويل بعد — اضغط &quot;تعديل&quot; لإضافتها.
+                  </p>
+                ) : null}
+
+                <p style={{ fontSize: 12, color: "var(--text-3)", lineHeight: 1.65 }}>
+                  التحويل يتم مباشرة إلى حساب المنسّق. الموقع فقط لتنظيم القَطّة.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Confirm payment */}
         <div className="card space-y-3">
           <h2 className="section-title">تأكيد الدفع ✅</h2>
@@ -383,31 +541,33 @@ export default function SplitPage() {
           <MemberList members={data.members} togglingId={togglingId} onToggle={togglePaid} />
         </div>
 
-        {/* Add member */}
-        <div className="card space-y-3">
-          <h2 className="section-title">إضافة عضو 👑</h2>
-          <div className="flex gap-2">
-            <input
-              className="field"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addMember()}
-              placeholder="اسم الشخص"
-              disabled={isFull}
-            />
-            <button
-              className="btn btn-white"
-              onClick={addMember}
-              disabled={isFull || addingMember || !newName.trim()}
-              style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}
-            >
-              {addingMember ? <span className="spinner" /> : "إضافة"}
-            </button>
+        {/* Add person — organizer only */}
+        {isOrganizer && (
+          <div className="card space-y-3">
+            <h2 className="section-title">إضافة شخص</h2>
+            <div className="flex gap-2">
+              <input
+                className="field"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addMember()}
+                placeholder="اسم الشخص"
+                disabled={isFull}
+              />
+              <button
+                className="btn btn-white"
+                onClick={addMember}
+                disabled={isFull || addingMember || !newName.trim()}
+                style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}
+              >
+                {addingMember ? <span className="spinner" /> : "+ إضافة"}
+              </button>
+            </div>
+            {isFull && (
+              <p className="text-xs" style={{ color: "var(--success)" }}>القَطّة اكتملت ✅</p>
+            )}
           </div>
-          {isFull && (
-            <p className="text-xs" style={{ color: "var(--success)" }}>القِطّة اكتملت ✅</p>
-          )}
-        </div>
+        )}
 
         {/* Share actions */}
         <div className="space-y-2">
@@ -418,7 +578,7 @@ export default function SplitPage() {
             نسخ رسالة المشاركة
           </button>
           <p className="text-xs text-center pt-1" style={{ color: "var(--text-3)" }}>
-            سيُرسل الرابط مع تفاصيل القِطّة والمبلغ
+            سيُرسل الرابط مع تفاصيل القَطّة والمبلغ
           </p>
         </div>
 

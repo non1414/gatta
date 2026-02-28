@@ -10,6 +10,8 @@ export type SplitData = {
   total: number
   people: number
   eventAtISO: string
+  bankName: string
+  iban: string
   members: Member[]
 }
 
@@ -19,4 +21,6 @@ export type SplitRow = {
   total: number
   people: number
   event_at: string
+  bank_name: string | null
+  iban: string | null
 }
