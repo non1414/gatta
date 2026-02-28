@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState } from "react"
 
-export type Theme = "eid" | "majlis" | "night"
+export type Theme = "eid" | "minimal"
 
 type ThemeCtx = { theme: Theme; setTheme: (t: Theme) => void }
 

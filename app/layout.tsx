@@ -35,7 +35,7 @@ export default function RootLayout({
         {/* Anti-flash: apply stored theme before first paint */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('gatta_theme');if(t&&['eid','majlis','night'].indexOf(t)!==-1)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('gatta_theme');if(t&&['eid','minimal'].indexOf(t)!==-1)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`,
           }}
         />
       </head>

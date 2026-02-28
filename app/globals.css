@@ -1,75 +1,65 @@
 @import "tailwindcss";
 
-/* ─── Eid theme (default) ───────────────────────────────────── */
+/* ─── Eid Light theme (default) ─────────────────────────────── */
 :root,
 [data-theme="eid"] {
-  --primary:        #FF6B3D;
-  --primary-active: #E85A2E;
-  --success:        #22C55E;
+  /* Primary tokens */
+  --bg:        #FFF7EF;
+  --surface:   #FFFFFF;
+  --surface2:  #FFF3E6;
+  --border:    #F1E3D6;
+  --text:      #1A1A1A;
+  --muted:     #6B5E55;
+  --primary:   #FF6A3D;
+  --secondary: #A77BFA;
+  --gold:      #D9A441;
+  --shadow:    0 14px 40px rgba(17, 17, 17, 0.10);
+  --ring:      0 0 0 3px rgba(255, 106, 61, 0.22);
+
+  /* Legacy aliases (used by existing component classes) */
+  --primary-active: #E55B30;
+  --success:        #3A9A6E;
   --btn-text:       #FFFFFF;
-
-  --bg:           #0F0F12;
-  --bg-card:      rgba(26, 26, 31, 0.72);
-  --bg-input:     #1A1A22;
-  --border:       #2A2A35;
-  --border-focus: rgba(255, 107, 61, 0.55);
-
-  --text-1:       #FFFFFF;
-  --text-2:       #9A9AAA;
-  --text-3:       #4A4A5A;
-
-  --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 107, 61, 0.12);
-  --shadow-btn:   0 4px 20px rgba(255, 107, 61, 0.45);
-  --gradient-body: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 107, 61, 0.14) 0%, transparent 70%);
+  --bg-card:        var(--surface);
+  --bg-input:       var(--surface2);
+  --border-focus:   rgba(255, 106, 61, 0.45);
+  --text-1:         var(--text);
+  --text-2:         var(--muted);
+  --text-3:         #B0A090;
+  --shadow-card:    var(--shadow), 0 0 0 1px var(--border);
+  --shadow-btn:     0 4px 16px rgba(255, 106, 61, 0.30);
 }
 
-/* ─── Majlis theme ──────────────────────────────────────────── */
-[data-theme="majlis"] {
-  --primary:        #E76F51;
-  --primary-active: #CF5F42;
-  --success:        #22C55E;
+/* ─── Minimal Light theme (optional) ────────────────────────── */
+[data-theme="minimal"] {
+  --bg:        #FAFAFA;
+  --surface:   #FFFFFF;
+  --surface2:  #F3F4F6;
+  --border:    #E5E7EB;
+  --text:      #111827;
+  --muted:     #6B7280;
+  --primary:   #FF6A3D;
+  --secondary: #8B5CF6;
+  --gold:      #D9A441;
+  --shadow:    0 14px 40px rgba(17, 17, 17, 0.08);
+  --ring:      0 0 0 3px rgba(255, 106, 61, 0.18);
+
+  --primary-active: #E55B30;
+  --success:        #16A34A;
   --btn-text:       #FFFFFF;
-
-  --bg:           #0E0A07;
-  --bg-card:      rgba(28, 18, 10, 0.78);
-  --bg-input:     #1C1208;
-  --border:       #2E1E10;
-  --border-focus: rgba(231, 111, 81, 0.55);
-
-  --text-1:       #FDE8D0;
-  --text-2:       #A07050;
-  --text-3:       #503020;
-
-  --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(231, 111, 81, 0.14);
-  --shadow-btn:   0 4px 20px rgba(231, 111, 81, 0.45);
-  --gradient-body: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(231, 111, 81, 0.12) 0%, transparent 70%);
-}
-
-/* ─── Night theme ───────────────────────────────────────────── */
-[data-theme="night"] {
-  --primary:        #F2C94C;
-  --primary-active: #D4A838;
-  --success:        #22C55E;
-  --btn-text:       #1A1200;
-
-  --bg:           #080810;
-  --bg-card:      rgba(14, 14, 24, 0.78);
-  --bg-input:     #0E0E1C;
-  --border:       #1E1E30;
-  --border-focus: rgba(242, 201, 76, 0.55);
-
-  --text-1:       #FFF8E0;
-  --text-2:       #8A7A55;
-  --text-3:       #403830;
-
-  --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(242, 201, 76, 0.12);
-  --shadow-btn:   0 4px 20px rgba(242, 201, 76, 0.4);
-  --gradient-body: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(242, 201, 76, 0.10) 0%, transparent 70%);
+  --bg-card:        var(--surface);
+  --bg-input:       var(--surface2);
+  --border-focus:   rgba(255, 106, 61, 0.40);
+  --text-1:         var(--text);
+  --text-2:         var(--muted);
+  --text-3:         #9CA3AF;
+  --shadow-card:    var(--shadow), 0 0 0 1px var(--border);
+  --shadow-btn:     0 3px 12px rgba(255, 106, 61, 0.22);
 }
 
 @theme inline {
   --color-background: var(--bg);
-  --color-foreground:  var(--text-1);
+  --color-foreground:  var(--text);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -79,29 +69,50 @@
 
 html {
   direction: rtl;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
-  background: var(--bg);
-  background-image: var(--gradient-body);
-  color: var(--text-1);
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse 70% 45% at 10% 5%, rgba(255, 106, 61, 0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 40% at 90% 90%, rgba(167, 123, 250, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 30% at 50% 2%, rgba(217, 164, 65, 0.06) 0%, transparent 45%);
+  color: var(--text);
   font-family: var(--font-geist-sans), "Segoe UI", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
   transition: background-color 0.25s, color 0.2s;
 }
 
+/* Eid sparkle dot pattern */
+[data-theme="eid"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    radial-gradient(circle, rgba(217, 164, 65, 0.18) 1px, transparent 1px),
+    radial-gradient(circle, rgba(167, 123, 250, 0.12) 1px, transparent 1px),
+    radial-gradient(circle, rgba(255, 106, 61, 0.10) 1px, transparent 1px);
+  background-size: 80px 80px, 130px 130px, 170px 170px;
+  background-position: 10px 10px, 45px 60px, 85px 25px;
+}
+
+/* Minimal light: no background treatment */
+[data-theme="minimal"] body {
+  background-image: none;
+}
+
 /* ─── Card ──────────────────────────────────────────────────── */
 .card {
   background: var(--bg-card);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow-card);
   padding: 22px;
-  transition: background 0.25s, border-color 0.25s;
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
 
 @media (min-width: 640px) {
@@ -119,20 +130,23 @@ body {
   font-size: 16px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s, background 0.25s;
+  transition: border-color 0.15s, box-shadow 0.15s;
   text-align: right;
   -webkit-appearance: none;
   appearance: none;
   height: 52px;
 }
 
-.field:focus  { border-color: var(--border-focus); }
+.field:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--ring);
+}
 .field::placeholder { color: var(--text-3); }
 .field:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .field[type="datetime-local"] { padding-top: 0; padding-bottom: 0; }
 .field[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.5);
+  filter: opacity(0.4);
   cursor: pointer;
 }
 
@@ -157,9 +171,9 @@ body {
 }
 
 .btn:active:not(:disabled) { transform: scale(0.97); }
-.btn:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
 
-/* Primary — themed */
+/* Primary — coral */
 .btn-white {
   background: var(--primary);
   color: var(--btn-text);
@@ -167,6 +181,7 @@ body {
 }
 .btn-white:hover:not(:disabled) {
   background: var(--primary-active);
+  box-shadow: 0 6px 20px rgba(255, 106, 61, 0.38);
 }
 
 /* Ghost — neutral */
@@ -177,7 +192,7 @@ body {
   box-shadow: none;
 }
 .btn-ghost:hover:not(:disabled) {
-  border-color: var(--text-3);
+  background: var(--border);
 }
 
 /* ─── Spinners ──────────────────────────────────────────────── */
@@ -188,19 +203,13 @@ body {
   animation: spin 0.75s linear infinite;
   width: 20px;
   height: 20px;
-  border: 2.5px solid rgba(255, 255, 255, 0.3);
+  border: 2.5px solid rgba(255, 255, 255, 0.4);
   border-top-color: #FFFFFF;
 }
 
 .spinner-light {
-  border-color: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.4);
   border-top-color: #FFFFFF;
-}
-
-/* Night theme: spinner inside primary button uses dark color */
-[data-theme="night"] .btn-white .spinner {
-  border-color: rgba(0, 0, 0, 0.2);
-  border-top-color: rgba(0, 0, 0, 0.7);
 }
 
 /* ─── Progress ──────────────────────────────────────────────── */
@@ -225,7 +234,7 @@ body {
   justify-content: space-between;
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 0 16px;
+  padding: 0 14px;
   text-align: right;
   width: 100%;
   font-family: inherit;
@@ -234,18 +243,19 @@ body {
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
   min-height: 52px;
+  gap: 8px;
 }
 
 .member-row:hover:not(:disabled) { background: var(--border); }
 .member-row:disabled { cursor: default; }
 
-/* Paid row — subtle green */
+/* Paid row — subtle teal success tint */
 .member-row-paid {
-  border-color: rgba(34, 197, 94, 0.28);
-  background: rgba(34, 197, 94, 0.06);
+  border-color: rgba(58, 154, 110, 0.28);
+  background: rgba(58, 154, 110, 0.06);
 }
 .member-row-paid:hover:not(:disabled) {
-  background: rgba(34, 197, 94, 0.10);
+  background: rgba(58, 154, 110, 0.10);
 }
 
 /* ─── Labels ────────────────────────────────────────────────── */
@@ -272,6 +282,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 99px;
   padding: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .theme-btn {
@@ -291,12 +302,16 @@ body {
 
 .theme-btn-active {
   background: var(--primary);
-  color: var(--btn-text);
+  color: #FFFFFF;
+  box-shadow: 0 2px 6px rgba(255, 106, 61, 0.30);
 }
 
 .theme-btn-inactive {
   background: transparent;
   color: var(--text-2);
+}
+.theme-btn-inactive:hover {
+  background: var(--border);
 }
 
 /* ─── Animations ────────────────────────────────────────────── */

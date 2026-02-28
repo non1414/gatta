@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase"
 import { useToast } from "../components/Toast"
 import { Footer } from "../components/Footer"
 import { PageHeader } from "../components/PageHeader"
+import { EidDecorOverlay } from "../components/EidDecorOverlay"
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -74,7 +75,8 @@ export default function CreatePage() {
   }
 
   return (
-    <main className="min-h-dvh px-4 py-8 sm:py-12">
+    <main className="min-h-dvh px-4 py-8 sm:py-12" style={{ position: "relative" }}>
+      <EidDecorOverlay />
       <div className="mx-auto max-w-md">
 
         <PageHeader />

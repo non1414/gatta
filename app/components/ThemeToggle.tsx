@@ -3,9 +3,8 @@
 import { useTheme, type Theme } from "./ThemeProvider"
 
 const THEMES: { id: Theme; label: string; emoji: string }[] = [
-  { id: "eid",    label: "عيد",  emoji: "🌙" },
-  { id: "majlis", label: "جلسة", emoji: "🏡" },
-  { id: "night",  label: "ليلي", emoji: "✨" },
+  { id: "eid",     label: "عيد",   emoji: "✨" },
+  { id: "minimal", label: "هادئ",  emoji: "🤍" },
 ]
 
 export function ThemeToggle() {

@@ -8,6 +8,7 @@ import { PaymentProgress } from "@/app/components/PaymentProgress"
 import { MemberList } from "@/app/components/MemberList"
 import { Footer } from "@/app/components/Footer"
 import { PageHeader } from "@/app/components/PageHeader"
+import { EidDecorOverlay } from "@/app/components/EidDecorOverlay"
 import type { Member, SplitData } from "@/app/lib/types"
 
 function formatRemaining(ms: number) {
@@ -308,7 +309,8 @@ export default function SplitPage() {
 
   /* ─── Main ─────────────────────────────────────────────────── */
   return (
-    <main className="min-h-dvh px-4 py-8 sm:py-12">
+    <main className="min-h-dvh px-4 py-8 sm:py-12" style={{ position: "relative" }}>
+      <EidDecorOverlay />
       <div className="mx-auto max-w-md space-y-4">
 
         <PageHeader />

@@ -32,13 +32,8 @@ export function MemberList({ members, togglingId, onToggle }: Props) {
             className={`member-row${!isEmpty && m.paid ? " member-row-paid" : ""}`}
             style={isToggling ? { opacity: 0.5 } : {}}
           >
-            {/* Name + optional crown */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {isOrganizer && (
-                <span style={{ fontSize: 15, lineHeight: 1 }} title="المنسّق">
-                  👑
-                </span>
-              )}
+            {/* Name + organizer badge */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span
                 style={{
                   fontSize: 14,
@@ -48,6 +43,26 @@ export function MemberList({ members, togglingId, onToggle }: Props) {
               >
                 {isEmpty ? `بانتظار شخص (${emptyNum})` : m.name}
               </span>
+              {isOrganizer && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                    background: "rgba(217, 164, 65, 0.15)",
+                    border: "1px solid rgba(217, 164, 65, 0.35)",
+                    borderRadius: 6,
+                    padding: "2px 7px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#7A5B10",
+                    whiteSpace: "nowrap",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  👑 المنسّق
+                </span>
+              )}
             </div>
 
             {/* Status icon */}
