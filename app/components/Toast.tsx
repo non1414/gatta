@@ -18,9 +18,7 @@ const ToastContext = createContext<ToastContextType | null>(null)
 
 export function useToast() {
   const context = useContext(ToastContext)
-  if (!context) {
-    throw new Error("useToast must be used within ToastProvider")
-  }
+  if (!context) throw new Error("useToast must be used within ToastProvider")
   return context
 }
 
@@ -39,7 +37,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-80 z-50 flex flex-col gap-2">
+      <div
+        style={{
+          position: "fixed",
+          bottom: "1rem",
+          left: "1rem",
+          right: "1rem",
+          zIndex: 50,
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+        }}
+      >
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} onClose={() => removeToast(toast.id)} />
         ))}
@@ -48,32 +57,59 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+const toastStyles: Record<ToastType, { bg: string; border: string }> = {
+  success: { bg: "#14532d", border: "rgba(74,222,128,0.2)" },
+  error:   { bg: "#7f1d1d", border: "rgba(248,113,113,0.2)" },
+  info:    { bg: "#1c1c1c", border: "rgba(255,255,255,0.08)" },
+}
+
+const toastIcon: Record<ToastType, string> = {
+  success: "✅",
+  error:   "❌",
+  info:    "ℹ️",
+}
+
 function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   useEffect(() => {
-    const timer = setTimeout(onClose, 3000)
+    const timer = setTimeout(onClose, 3500)
     return () => clearTimeout(timer)
   }, [onClose])
 
-  const bgColor = {
-    success: "bg-green-600",
-    error: "bg-red-600",
-    info: "bg-gray-800",
-  }[toast.type]
-
-  const icon = {
-    success: "✅",
-    error: "❌",
-    info: "ℹ️",
-  }[toast.type]
+  const { bg, border } = toastStyles[toast.type]
 
   return (
     <div
-      className={`${bgColor} text-white px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-slide-up`}
+      className="animate-slide-up"
       role="alert"
+      style={{
+        background: bg,
+        border: `1px solid ${border}`,
+        borderRadius: "14px",
+        padding: "12px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+        color: "#f2f2f2",
+        fontSize: "14px",
+        direction: "rtl",
+      }}
     >
-      <span>{icon}</span>
-      <span className="flex-1">{toast.message}</span>
-      <button onClick={onClose} className="text-white/70 hover:text-white">
+      <span style={{ flexShrink: 0 }}>{toastIcon[toast.type]}</span>
+      <span style={{ flex: 1 }}>{toast.message}</span>
+      <button
+        onClick={onClose}
+        style={{
+          background: "none",
+          border: "none",
+          color: "rgba(242,242,242,0.5)",
+          cursor: "pointer",
+          padding: "0 4px",
+          fontSize: "16px",
+          lineHeight: 1,
+          flexShrink: 0,
+        }}
+      >
         ✕
       </button>
     </div>

@@ -21,16 +21,14 @@ function formatRemaining(ms: number) {
 }
 
 function formatArabicDate(isoString: string) {
-  const date = new Date(isoString)
-  const options: Intl.DateTimeFormatOptions = {
+  return new Date(isoString).toLocaleDateString("ar-SA", {
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-  }
-  return date.toLocaleDateString("ar-SA", options)
+  })
 }
 
 const isEmptyName = (name: string) => {
@@ -40,20 +38,14 @@ const isEmptyName = (name: string) => {
 
 function normalizeMembers(people: number, members: Member[]) {
   const finalPeople = Math.max(2, Math.min(50, Math.floor(people || 0)))
-
-  // رتّبي بحيث اللي عنده اسم يجي أول، ثم المقاعد الفاضية
   const cleaned = (members || []).map((m) => ({
     id: m.id,
     name: isEmptyName(m.name) ? "" : String(m.name ?? ""),
     paid: Boolean(m.paid),
   }))
-
-  const padded: Member[] = Array.from({ length: finalPeople }, (_, i) => {
-    const m = cleaned[i]
-    return m ? m : { id: crypto.randomUUID(), name: "", paid: false }
-  })
-
-  return padded
+  return Array.from({ length: finalPeople }, (_, i) =>
+    cleaned[i] ?? { id: crypto.randomUUID(), name: "", paid: false }
+  )
 }
 
 export default function SplitPage() {
@@ -80,7 +72,7 @@ export default function SplitPage() {
 
     const { data: split, error: splitErr } = await supabase
       .from("splits")
-      .select("id,title,total,people,fee_per_person,event_at")
+      .select("id,title,total,people,event_at")
       .eq("id", id)
       .single()
 
@@ -102,16 +94,13 @@ export default function SplitPage() {
       return
     }
 
-    const members = normalizeMembers(split.people, (membersRows || []) as Member[])
-
     setData({
       id: split.id,
       title: split.title,
       total: Number(split.total ?? 0),
       people: Number(split.people ?? 0),
-      feePerPerson: Number(split.fee_per_person ?? 0),
       eventAtISO: String(split.event_at ?? ""),
-      members,
+      members: normalizeMembers(split.people, (membersRows || []) as Member[]),
     })
 
     setLoading(false)
@@ -119,67 +108,85 @@ export default function SplitPage() {
 
   useEffect(() => {
     let mounted = true
-    const load = async () => {
-      if (mounted) {
-        await loadFromSupabase()
-      }
-    }
+    const load = async () => { if (mounted) await loadFromSupabase() }
     load()
-    return () => {
-      mounted = false
-    }
+    return () => { mounted = false }
   }, [loadFromSupabase])
 
+  // Realtime: patch member rows in-place on UPDATE — no full refetch needed
+  useEffect(() => {
+    if (!id) return
+
+    const channel = supabase
+      .channel(`members-${id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "members",
+          filter: `split_id=eq.${id}`,
+        },
+        (payload) => {
+          const updated = payload.new as { id: string; name: string; paid: boolean }
+          setData((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  members: prev.members.map((m) =>
+                    m.id === updated.id
+                      ? { ...m, name: updated.name, paid: updated.paid }
+                      : m
+                  ),
+                }
+              : prev
+          )
+        }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [id])
+
   const share = useMemo(() => {
-    if (!data) return 0
-    return Math.ceil(data.total / data.people) + (data.feePerPerson ?? 0)
+    if (!data || data.people <= 0) return 0
+    return data.total / data.people
   }, [data])
 
-  const paidCount = useMemo(() => {
-    if (!data) return 0
-    return (data.members || []).filter((m) => m.paid).length
-  }, [data])
-
-  const joinedCount = useMemo(() => {
-    if (!data) return 0
-    return (data.members || []).filter((m) => m.name.trim().length > 0).length
-  }, [data])
+  const paidCount = useMemo(
+    () => (data?.members ?? []).filter((m) => m.paid).length,
+    [data]
+  )
+  const joinedCount = useMemo(
+    () => (data?.members ?? []).filter((m) => m.name.trim().length > 0).length,
+    [data]
+  )
+  const isFull = useMemo(
+    () => !!data && data.members.every((m) => m.name.trim().length > 0),
+    [data]
+  )
 
   const eventAtISO = data?.eventAtISO
   const remainingText = useMemo(() => {
     if (!eventAtISO) return ""
-    const target = new Date(eventAtISO).getTime()
-    return formatRemaining(target - now)
+    return formatRemaining(new Date(eventAtISO).getTime() - now)
   }, [eventAtISO, now])
-
-  const isFull = useMemo(() => {
-    if (!data) return false
-    return data.members.every((m) => m.name.trim().length > 0)
-  }, [data])
 
   const confirmPaid = async () => {
     if (!data) return
     const name = myName.trim()
-    if (!name) {
-      showToast("اكتب الاسم أول", "error")
-      return
-    }
+    if (!name) { showToast("اكتب الاسم أولاً", "error"); return }
 
     setConfirmingPayment(true)
-
     try {
       const lower = name.toLowerCase()
-
       const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
+
       if (existing) {
         const { error } = await supabase.from("members").update({ paid: true }).eq("id", existing.id)
-        if (error) {
-          showToast(error.message, "error")
-        } else {
-          showToast("تم تأكيد الدفع", "success")
-        }
+        if (error) showToast(error.message, "error")
+        else showToast("تم تأكيد الدفع ✅", "success")
         setMyName("")
-        await loadFromSupabase()
         setConfirmingPayment(false)
         return
       }
@@ -196,209 +203,274 @@ export default function SplitPage() {
         .update({ name, paid: true })
         .eq("id", empty.id)
 
-      if (error) {
-        showToast(error.message, "error")
-      } else {
-        showToast("تم تأكيد الدفع وإضافة الاسم", "success")
-      }
+      if (error) showToast(error.message, "error")
+      else showToast("تم تأكيد الدفع وإضافة الاسم ✅", "success")
 
       setMyName("")
-      await loadFromSupabase()
     } catch {
       showToast("حدث خطأ غير متوقع", "error")
     }
-
     setConfirmingPayment(false)
   }
 
   const togglePaid = async (memberId: string) => {
     if (!data) return
     const m = data.members.find((x) => x.id === memberId)
-    if (!m) return
-    if (m.name.trim().length === 0) return
+    if (!m || m.name.trim().length === 0) return
 
     setTogglingId(memberId)
-
     try {
-      const { error } = await supabase.from("members").update({ paid: !m.paid }).eq("id", memberId)
-      if (error) {
-        showToast(error.message, "error")
-      }
-      await loadFromSupabase()
+      const { error } = await supabase
+        .from("members")
+        .update({ paid: !m.paid })
+        .eq("id", memberId)
+      if (error) showToast(error.message, "error")
     } catch {
       showToast("حدث خطأ غير متوقع", "error")
     }
-
     setTogglingId(null)
   }
 
   const addMember = async () => {
     if (!data) return
     const name = newName.trim()
-    if (!name) {
-      showToast("اكتب الاسم للإضافة", "error")
-      return
-    }
+    if (!name) { showToast("اكتب الاسم للإضافة", "error"); return }
 
-    const exists = data.members.some((m) => m.name.trim().toLowerCase() === name.toLowerCase())
-    if (exists) {
+    if (data.members.some((m) => m.name.trim().toLowerCase() === name.toLowerCase())) {
       showToast("الاسم موجود بالفعل", "error")
       return
     }
 
     const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) {
-      showToast("القِطّة اكتملت — ما فيه مقاعد فاضية", "error")
-      return
-    }
+    if (!empty) { showToast("القِطّة اكتملت — ما فيه مقاعد فاضية", "error"); return }
 
     setAddingMember(true)
-
     try {
-      const { error } = await supabase.from("members").update({ name, paid: false }).eq("id", empty.id)
-      if (error) {
-        showToast(error.message, "error")
-      } else {
-        showToast("تم إضافة العضو", "success")
-      }
+      const { error } = await supabase
+        .from("members")
+        .update({ name, paid: false })
+        .eq("id", empty.id)
+      if (error) showToast(error.message, "error")
+      else showToast("تم إضافة العضو", "success")
       setNewName("")
-      await loadFromSupabase()
     } catch {
       showToast("حدث خطأ غير متوقع", "error")
     }
-
     setAddingMember(false)
   }
 
+  const buildShareText = () => {
+    if (!data) return ""
+    const url = window.location.href
+    const formattedDate = formatArabicDate(data.eventAtISO)
+    return [
+      `هذا رابط القِطّة 👇`,
+      ``,
+      `المناسبة: ${data.title}`,
+      `المبلغ الإجمالي: ${data.total} ريال`,
+      `حصة الشخص: ${share.toFixed(2)} ريال`,
+      `موعد اللقاء: ${formattedDate}`,
+      ``,
+      `اكتب اسمك واضغط "تأكيد الدفع" بعد إتمام التحويل`,
+      url,
+    ].join("\n")
+  }
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(buildShareText())
+    showToast("تم نسخ رسالة المشاركة", "success")
+  }
+
+  const handleWhatsApp = async () => {
+    const text = buildShareText()
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `قِطّة: ${data?.title}`, text })
+        return
+      } catch {
+        // user cancelled or not supported — fall through to WhatsApp
+      }
+    }
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank")
+  }
+
+  /* ─── Loading ─────────────────────────────────────────────── */
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-8 text-center">
-        جاري تحميل الرابط…
+      <main className="min-h-dvh flex items-center justify-center p-8">
+        <div className="flex flex-col items-center gap-3">
+          <span
+            className="spinner spinner-light"
+            style={{ width: 24, height: 24 }}
+          />
+          <span className="text-sm" style={{ color: "var(--text-2)" }}>
+            جاري التحميل…
+          </span>
+        </div>
       </main>
     )
   }
 
+  /* ─── Not found ───────────────────────────────────────────── */
   if (!data) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-8 text-center">
-        الرابط غير متاح — تأكدي من صحة الرابط أو أنشئي رابط جديد
+      <main className="min-h-dvh flex items-center justify-center p-8 text-center">
+        <div className="space-y-3 max-w-xs">
+          <div className="text-4xl">🔗</div>
+          <p className="font-semibold">الرابط غير متاح</p>
+          <p className="text-sm" style={{ color: "var(--text-2)" }}>
+            تأكّد من صحة الرابط أو أنشئ رابطاً جديداً
+          </p>
+          <a
+            href="/create"
+            className="btn btn-ghost"
+            style={{ width: "auto", display: "inline-flex", padding: "10px 24px" }}
+          >
+            إنشاء رابط جديد
+          </a>
+        </div>
       </main>
     )
   }
 
+  /* ─── Main ────────────────────────────────────────────────── */
   return (
-    <main className="min-h-screen p-6 sm:p-10">
-      <div className="mx-auto max-w-xl space-y-6">
-        <header className="text-center">
-          <h1 className="text-3xl font-bold">{data.title}</h1>
-          <p className="text-gray-500 mt-2">شارك الرابط مع المجموعة وتابع المدفوعات</p>
+    <main className="min-h-dvh px-4 py-10 sm:py-14">
+      <div className="mx-auto max-w-md space-y-4">
+
+        {/* Header */}
+        <header className="text-center space-y-1 pb-2">
+          <h1 className="text-2xl font-bold">{data.title}</h1>
+          <p className="text-sm" style={{ color: "var(--text-2)" }}>
+            شارك الرابط مع المجموعة وتابع المدفوعات
+          </p>
         </header>
 
-        <section className="border rounded-2xl p-5 sm:p-6">
-          <div className="flex items-end justify-between">
+        {/* Summary card */}
+        <div className="card space-y-5">
+          <div className="flex items-end justify-between gap-4">
             <div>
-              <p className="text-gray-500">حصة الشخص</p>
-              <div className="text-4xl font-bold mt-1">{share} ريال</div>
+              <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>
+                حصة الشخص
+              </p>
+              <div className="text-4xl font-black leading-none">
+                {share.toFixed(2)}
+                <span
+                  className="text-xl font-normal mr-1"
+                  style={{ color: "var(--text-2)" }}
+                >
+                  ريال
+                </span>
+              </div>
             </div>
-            <div className="text-right">
-              <p className="text-gray-500">العدّ التنازلي</p>
-              <p className="font-semibold mt-1">{remainingText}</p>
-            </div>
+            {remainingText && (
+              <div className="text-left shrink-0">
+                <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>
+                  الموعد
+                </p>
+                <p className="font-semibold text-sm leading-snug">{remainingText}</p>
+              </div>
+            )}
           </div>
 
-          <div className="mt-5">
-            <PaymentProgress
-              paidCount={paidCount}
-              joinedCount={joinedCount}
-              totalPeople={data.people}
-              isFull={isFull}
-            />
-          </div>
-        </section>
+          <PaymentProgress
+            paidCount={paidCount}
+            joinedCount={joinedCount}
+            totalPeople={data.people}
+            isFull={isFull}
+          />
+        </div>
 
-        <section className="border rounded-2xl p-5 sm:p-6">
-          <h2 className="font-semibold mb-3">تأكيد الدفع ✅</h2>
+        {/* Confirm payment */}
+        <div className="card space-y-3">
+          <h2 className="section-title">تأكيد الدفع ✅</h2>
           <div className="flex gap-2">
             <input
+              className="field"
               value={myName}
               onChange={(e) => setMyName(e.target.value)}
-              placeholder="اكتب الاسم"
-              className="flex-1 border rounded-xl p-3"
+              onKeyDown={(e) => e.key === "Enter" && confirmPaid()}
+              placeholder="اكتب اسمك هنا"
             />
             <button
+              className="btn btn-white"
               onClick={confirmPaid}
-              className="bg-black text-white px-5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               disabled={!myName.trim() || confirmingPayment}
+              style={{ width: "auto", padding: "13px 20px", flexShrink: 0 }}
             >
-              {confirmingPayment ? (
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                "تم"
-              )}
+              {confirmingPayment ? <span className="spinner" /> : "تم"}
             </button>
           </div>
-          <p className="text-xs text-gray-400 mt-2">
-            إذا الاسم غير موجود سيتم وضعه في أول مقعد فاضي (بدون زيادة العدد).
+          <p className="text-xs" style={{ color: "var(--text-3)" }}>
+            إذا كان اسمك غير موجود، سيُضاف تلقائياً في أول مقعد فاضٍ.
           </p>
-        </section>
+        </div>
 
-        <section className="border rounded-2xl p-5 sm:p-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">قائمة المجموعة</h2>
-            <span className="text-xs text-gray-400">اضغط على الحالة للتبديل</span>
+        {/* Member list */}
+        <div className="card space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="section-title" style={{ marginBottom: 0 }}>
+              المجموعة
+            </h2>
+            <span className="text-xs" style={{ color: "var(--text-3)" }}>
+              اضغط للتبديل
+            </span>
           </div>
-
           <MemberList
             members={data.members}
             togglingId={togglingId}
             onToggle={togglePaid}
           />
-        </section>
+        </div>
 
-        <section className="border rounded-2xl p-5 sm:p-6">
-          <h2 className="font-semibold mb-3">إضافة اسم (للمنسّق)</h2>
+        {/* Add member (organizer) */}
+        <div className="card space-y-3">
+          <h2 className="section-title">إضافة عضو (للمنسّق)</h2>
           <div className="flex gap-2">
             <input
+              className="field"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addMember()}
               placeholder="اسم الشخص"
-              className="flex-1 border rounded-xl p-3"
+              disabled={isFull}
             />
             <button
+              className="btn btn-white"
               onClick={addMember}
-              className="bg-black text-white px-5 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              disabled={isFull || addingMember}
+              disabled={isFull || addingMember || !newName.trim()}
+              style={{ width: "auto", padding: "13px 20px", flexShrink: 0 }}
             >
-              {addingMember ? (
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              ) : (
-                "إضافة"
-              )}
+              {addingMember ? <span className="spinner" /> : "إضافة"}
             </button>
           </div>
-          {isFull && <p className="text-xs text-gray-400 mt-2">القِطّة اكتملت ✅</p>}
-        </section>
+          {isFull && (
+            <p className="text-xs" style={{ color: "var(--text-2)" }}>
+              القِطّة اكتملت ✅
+            </p>
+          )}
+        </div>
 
-        <button
-          onClick={() => {
-            const url = window.location.href
-            const formattedDate = formatArabicDate(data.eventAtISO)
-            navigator.clipboard.writeText(
-              `هذا رابط القِطّة 👇\nاكتب الاسم واضغط (تأكيد الدفع) بعد التحويل\nموعد اللقاء: ${formattedDate}\n${url}`
-            )
-            showToast("تم نسخ رسالة المشاركة", "success")
-          }}
-          className="w-full bg-black text-white rounded-2xl py-3 font-semibold"
+        {/* Share actions */}
+        <div className="space-y-2">
+          <button className="btn btn-white" onClick={handleWhatsApp}>
+            مشاركة عبر واتساب
+          </button>
+          <button className="btn btn-ghost" onClick={handleCopy}>
+            نسخ رسالة المشاركة
+          </button>
+        </div>
+
+        <a
+          href="/create"
+          className="block text-center text-sm"
+          style={{ color: "var(--text-3)", textDecoration: "none" }}
         >
-          نسخ رسالة المشاركة
-        </button>
-
-        <a className="block text-sm text-gray-400 underline text-center" href="/create">
           إنشاء رابط جديد
         </a>
 
-        <p className="text-xs text-gray-400 text-center">
-          خدمة لتنظيم المدفوعات بين الأصدقاء فقط.
+        <p className="text-center text-xs" style={{ color: "var(--text-3)" }}>
+          خدمة مجانية لتنظيم القِطّة بين الأصدقاء
         </p>
       </div>
     </main>

@@ -9,25 +9,29 @@ export function PaymentProgress({ paidCount, joinedCount, totalPeople, isFull }:
   const progress = totalPeople > 0 ? Math.round((paidCount / totalPeople) * 100) : 0
 
   return (
-    <div className="space-y-2">
-      <div className="flex justify-between text-sm text-gray-500">
+    <div className="space-y-3">
+      <div
+        className="flex justify-between"
+        style={{ fontSize: "13px", color: "var(--text-2)" }}
+      >
         <span>المدفوع</span>
         <span>
-          {paidCount}/{totalPeople} • {progress}%
+          {paidCount} من {totalPeople} · {progress}%
         </span>
       </div>
 
-      <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-        <div
-          className="h-full bg-black transition-all duration-300"
-          style={{ width: `${progress}%` }}
-        />
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="flex justify-between text-sm text-gray-500">
-        <span>المنضمّين</span>
+      <div
+        className="flex justify-between"
+        style={{ fontSize: "13px", color: "var(--text-2)" }}
+      >
+        <span>المنضمّون</span>
         <span>
-          {joinedCount}/{totalPeople} {isFull ? "• اكتملت ✅" : ""}
+          {joinedCount} من {totalPeople}
+          {isFull ? " · اكتملت ✅" : ""}
         </span>
       </div>
     </div>

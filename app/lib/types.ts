@@ -9,7 +9,6 @@ export type SplitData = {
   title: string
   total: number
   people: number
-  feePerPerson: number
   eventAtISO: string
   members: Member[]
 }
@@ -19,6 +18,5 @@ export type SplitRow = {
   title: string
   total: number
   people: number
-  fee_per_person: number
   event_at: string
 }

@@ -4,79 +4,53 @@ import { useMemo, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { useToast } from "../components/Toast"
 
-type Member = { id: string; name: string; paid: boolean }
-type SplitData = {
-  title: string
-  total: number
-  people: number // عدد المقاعد (Slots)
-  feePerPerson: number
-  eventAtISO: string
-  members: Member[] // طولها ثابت = people، ومقاعد فاضية name=""
-  createdAt: number
-}
-
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
-// datetime-local يرجع "YYYY-MM-DDTHH:mm" بدون timezone
-// نحوله لـ ISO حقيقي حسب توقيت الجهاز
 function toLocalISO(datetimeLocalValue: string) {
-  const d = new Date(datetimeLocalValue)
-  return d.toISOString()
+  return new Date(datetimeLocalValue).toISOString()
 }
 
 export default function CreatePage() {
-  const [title, setTitle] = useState("جلسة الشاليه 🎉")
-  const [total, setTotal] = useState("2400")
-  const [people, setPeople] = useState("8")
-  const [eventAtISO, setEventAtISO] = useState("")
+  const [title, setTitle] = useState("")
+  const [total, setTotal] = useState("")
+  const [people, setPeople] = useState("")
+  const [eventAt, setEventAt] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const { showToast } = useToast()
 
-  const feePerPerson = 2
-
   const peopleNum = useMemo(() => {
     const p = Number(people)
-    if (!Number.isFinite(p)) return 0
-    return clampInt(Math.floor(p), 2, 50) // حد أعلى للمقاعد في الـ MVP
+    if (!Number.isFinite(p) || p < 2) return 0
+    return clampInt(Math.floor(p), 2, 50)
   }, [people])
 
   const totalNum = useMemo(() => {
     const t = Number(total)
-    if (!Number.isFinite(t)) return 0
-    return t
+    return Number.isFinite(t) && t > 0 ? t : 0
   }, [total])
 
   const previewShare = useMemo(() => {
-    const t = totalNum
-    const p = peopleNum
-    if (!Number.isFinite(t) || t <= 0 || !Number.isFinite(p) || p < 2) return "—"
-    return String(Math.ceil(t / p) + feePerPerson)
+    if (totalNum <= 0 || peopleNum < 2) return null
+    return (totalNum / peopleNum).toFixed(2)
   }, [totalNum, peopleNum])
 
-const createLink = async () => {
+  const createLink = async () => {
     if (!title.trim()) {
       showToast("اكتب اسم المناسبة", "error")
       return
     }
-
-    const t = Number(total)
-    const p = Number(people)
-
-    if (!Number.isFinite(t) || t <= 0) {
-      showToast("أدخل مبلغ صحيح", "error")
+    if (totalNum <= 0) {
+      showToast("أدخل مبلغاً صحيحاً", "error")
       return
     }
-    if (!Number.isFinite(p) || p < 2) {
-      showToast("عدد الأشخاص لازم يكون 2 أو أكثر", "error")
+    if (peopleNum < 2) {
+      showToast("عدد الأشخاص لازم يكون 2 على الأقل", "error")
       return
     }
-
-    const finalPeople = clampInt(Math.floor(p), 2, 50)
-
-    if (!eventAtISO) {
-      showToast("حدد تاريخ ووقت اللقاء", "error")
+    if (!eventAt) {
+      showToast("حدّد تاريخ ووقت اللقاء", "error")
       return
     }
 
@@ -85,30 +59,20 @@ const createLink = async () => {
     try {
       const id = crypto.randomUUID()
 
-      const members: Member[] = Array.from({ length: finalPeople }, () => ({
+      const members = Array.from({ length: peopleNum }, () => ({
         id: crypto.randomUUID(),
         name: "",
         paid: false,
       }))
 
-      const data: SplitData = {
-        title: title.trim(),
-        total: t,
-        people: finalPeople,
-        feePerPerson,
-        eventAtISO: toLocalISO(eventAtISO),
-        members,
-        createdAt: Date.now(),
-      }
-
       const { error: splitErr } = await supabase.from("splits").insert({
-        id: id,
-        title: data.title,
-        total: data.total,
-        people: data.people,
-        fee_per_person: data.feePerPerson,
-        event_at: data.eventAtISO,
-        created_at: data.createdAt,
+        id,
+        title: title.trim(),
+        total: totalNum,
+        people: peopleNum,
+        fee_per_person: 0,
+        event_at: toLocalISO(eventAt),
+        created_at: Date.now(),
       })
 
       if (splitErr) {
@@ -117,15 +81,15 @@ const createLink = async () => {
         return
       }
 
-      const rows = data.members.map((m) => ({
-        id: m.id,
-        split_id: id,
-        name: m.name,
-        paid: m.paid,
-        created_at: Date.now(),
-      }))
-
-      const { error: memErr } = await supabase.from("members").insert(rows)
+      const { error: memErr } = await supabase.from("members").insert(
+        members.map((m) => ({
+          id: m.id,
+          split_id: id,
+          name: m.name,
+          paid: m.paid,
+          created_at: Date.now(),
+        }))
+      )
 
       if (memErr) {
         showToast(memErr.message, "error")
@@ -133,7 +97,7 @@ const createLink = async () => {
         return
       }
 
-      showToast("تم إنشاء الرابط بنجاح", "success")
+      showToast("تم إنشاء الرابط", "success")
       window.location.href = `/s/${id}`
     } catch {
       showToast("حدث خطأ غير متوقع", "error")
@@ -142,100 +106,102 @@ const createLink = async () => {
   }
 
   return (
-    <main className="min-h-screen p-6 sm:p-10">
-      <div className="mx-auto max-w-xl">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-bold">إنشاء رابط قِطّة</h1>
-          <p className="text-gray-500 mt-2">رابط واحد… متابعة المدفوعات… وعدّ تنازلي للموعد</p>
+    <main className="min-h-dvh px-4 py-10 sm:py-14">
+      <div className="mx-auto max-w-md space-y-6">
+
+        {/* Header */}
+        <div className="text-center space-y-2">
+          <h1 className="text-2xl font-bold">إنشاء رابط قِطّة</h1>
+          <p className="text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
+            أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.
+          </p>
         </div>
 
-        <div className="border rounded-2xl p-5 sm:p-6 space-y-5">
+        {/* Form card */}
+        <div className="card space-y-5">
+
+          {/* Title */}
           <div>
-            <label className="block text-sm text-gray-500 mb-2">اسم المناسبة</label>
+            <label className="label">اسم المناسبة</label>
             <input
+              className="field"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full border rounded-xl p-3"
               placeholder="مثال: شاليه العيد"
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Total + People */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm text-gray-500 mb-2">المبلغ (ريال)</label>
+              <label className="label">المبلغ الإجمالي (ريال)</label>
               <input
+                className="field"
                 value={total}
-                onChange={(e) => {
-                  // تنظيف بسيط: نخليها أرقام فقط (مع السماح بالنقطة)
-                  const v = e.target.value.replace(/[^\d.]/g, "")
-                  setTotal(v)
-                }}
-                className="w-full border rounded-xl p-3"
-                inputMode="numeric"
+                onChange={(e) => setTotal(e.target.value.replace(/[^\d.]/g, ""))}
+                inputMode="decimal"
                 placeholder="2400"
               />
             </div>
-
             <div>
-              <label className="block text-sm text-gray-500 mb-2">عدد الأشخاص (المقاعد)</label>
+              <label className="label">عدد الأشخاص</label>
               <input
+                className="field"
                 value={people}
-                onChange={(e) => {
-                  const v = e.target.value.replace(/[^\d]/g, "")
-                  setPeople(v)
-                }}
-                className="w-full border rounded-xl p-3"
+                onChange={(e) => setPeople(e.target.value.replace(/[^\d]/g, ""))}
                 inputMode="numeric"
                 placeholder="8"
               />
-              <p className="text-xs text-gray-400 mt-2">
-                الحد الأقصى في النسخة التجريبية: 50 مقعد.
+              <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>
+                الحد الأقصى: 50
               </p>
             </div>
           </div>
 
+          {/* Event date */}
           <div>
-            <label className="block text-sm text-gray-500 mb-2">موعد اللقاء (اليوم والوقت)</label>
+            <label className="label">موعد اللقاء</label>
             <input
               type="datetime-local"
-              value={eventAtISO}
-              onChange={(e) => setEventAtISO(e.target.value)}
-              className="w-full border rounded-xl p-3"
+              className="field"
+              value={eventAt}
+              onChange={(e) => setEventAt(e.target.value)}
             />
-            <p className="text-xs text-gray-400 mt-2">
-              سيظهر عدّ تنازلي داخل صفحة القِطّة حتى الموعد.
+            <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>
+              سيظهر عدّ تنازلي في صفحة القِطّة حتى الموعد.
             </p>
           </div>
 
-          <div className="bg-gray-50 border rounded-2xl p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-gray-500">معاينة حصة الشخص</span>
-              <span className="font-bold text-lg">{previewShare} ريال</span>
+          {/* Preview */}
+          {previewShare && (
+            <div
+              className="rounded-2xl p-4 flex items-center justify-between"
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <span className="text-sm" style={{ color: "var(--text-2)" }}>
+                حصة الشخص
+              </span>
+              <span className="font-bold text-lg">
+                {previewShare}{" "}
+                <span className="text-sm font-normal" style={{ color: "var(--text-2)" }}>
+                  ريال
+                </span>
+              </span>
             </div>
-            <p className="text-xs text-gray-400 mt-1">
-              تشمل رسوم تنظيم بسيطة: {feePerPerson} ريال لكل شخص.
-            </p>
-          </div>
+          )}
 
-          <button
-            onClick={createLink}
-            disabled={isSubmitting}
-            className="w-full bg-black text-white rounded-2xl py-3 font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {isSubmitting ? (
-              <>
-                <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                جاري الإنشاء...
-              </>
-            ) : (
-              "إنشاء الرابط"
-            )}
+          {/* Submit */}
+          <button className="btn btn-white" onClick={createLink} disabled={isSubmitting}>
+            {isSubmitting ? <span className="spinner" /> : "إنشاء الرابط"}
           </button>
-
-          <p className="text-xs text-gray-400 text-center">
-            خدمة لتنظيم المدفوعات بين الأصدقاء فقط.
-          </p>
         </div>
+
+        <p className="text-center text-xs" style={{ color: "var(--text-3)" }}>
+          خدمة مجانية لتنظيم القِطّة بين الأصدقاء
+        </p>
       </div>
     </main>
   )

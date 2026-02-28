@@ -8,7 +8,7 @@ type Props = {
 
 export function MemberList({ members, togglingId, onToggle }: Props) {
   return (
-    <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
+    <div className="space-y-2" style={{ maxHeight: "320px", overflowY: "auto" }}>
       {members.map((m, index) => {
         const isEmpty = m.name.trim().length === 0
         const isToggling = togglingId === m.id
@@ -18,18 +18,26 @@ export function MemberList({ members, togglingId, onToggle }: Props) {
             key={m.id}
             onClick={() => onToggle(m.id)}
             disabled={isEmpty || isToggling}
-            className={`w-full flex items-center justify-between border rounded-xl px-4 py-3 text-right ${
-              isEmpty ? "opacity-60 cursor-not-allowed" : "hover:bg-gray-50"
-            } ${isToggling ? "opacity-50" : ""}`}
+            className="member-row"
+            style={isToggling ? { opacity: 0.5 } : {}}
           >
-            <span className="font-medium">
-              {isEmpty ? `مقعد متاح (${index + 1})` : m.name}
+            <span
+              className="font-medium"
+              style={{
+                fontSize: "14px",
+                color: isEmpty ? "var(--text-3)" : "var(--text-1)",
+              }}
+            >
+              {isEmpty ? `بانتظار شخص (${index + 1})` : m.name}
             </span>
-            <span className="text-xl">
+            <span style={{ fontSize: "18px", lineHeight: 1 }}>
               {isToggling ? (
-                <span className="inline-block w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                <span
+                  className="spinner spinner-light"
+                  style={{ width: 18, height: 18 }}
+                />
               ) : isEmpty ? (
-                "+"
+                <span style={{ color: "var(--text-3)", fontSize: "14px" }}>—</span>
               ) : m.paid ? (
                 "✅"
               ) : (

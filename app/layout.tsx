@@ -14,11 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "قِطّة - قسّم الحساب مع أصدقائك",
-  description: "خدمة لتنظيم المدفوعات الجماعية بين الأصدقاء. رابط واحد، متابعة المدفوعات، وعدّ تنازلي للموعد.",
+  title: "قِطّة — نظّم قِطّتك بسهولة",
+  description: "أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع من دفع ومن لم يدفع. مجاناً تماماً.",
   openGraph: {
-    title: "قِطّة - قسّم الحساب مع أصدقائك",
-    description: "خدمة لتنظيم المدفوعات الجماعية بين الأصدقاء",
+    title: "قِطّة — نظّم قِطّتك بسهولة",
+    description: "أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.",
     locale: "ar_SA",
     type: "website",
   },
@@ -31,9 +31,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ar" dir="rtl">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <Providers>{children}</Providers>
       </body>
     </html>

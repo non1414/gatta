@@ -1,26 +1,23 @@
 export default function Home() {
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center text-center gap-6 p-8">
+    <main className="min-h-dvh flex flex-col items-center justify-center text-center gap-8 px-6 py-12">
+      <div className="space-y-4 max-w-xs">
+        <div className="text-6xl font-black tracking-tight">قِطّة</div>
+        <h1 className="text-xl font-semibold" style={{ color: "var(--text-1)" }}>
+          نظّم القِطّة بدون إحراج
+        </h1>
+        <p className="text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
+          خدمة بسيطة لتنظيم القِطّة بين الأصدقاء — رابط واحد، متابعة فورية، وعدّ تنازلي للموعد.
+        </p>
+      </div>
 
-      <h1 className="text-4xl font-bold">
-        قسّم القِطّة بدون إحراج
-      </h1>
-
-      <p className="text-gray-500">
-        Split group payments in seconds
-      </p>
-
-      <a
-        href="/create"
-        className="bg-black text-white px-6 py-3 rounded-lg"
-      >
+      <a href="/create" className="btn btn-white" style={{ maxWidth: "280px" }}>
         ابدأ القِطّة
       </a>
 
-      <p className="text-xs text-gray-400 max-w-md">
-        منصة لتنظيم المدفوعات بين الأصدقاء فقط.
+      <p className="text-xs" style={{ color: "var(--text-3)" }}>
+        مجاناً تماماً · بدون تسجيل
       </p>
-
     </main>
-  )
+  );
 }
