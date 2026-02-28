@@ -88,7 +88,7 @@ export default function SplitPage() {
     setLoading(true)
     const { data: split, error: splitErr } = await supabase
       .from("splits")
-      .select("id,title,total,people,event_at,bank_name,iban")
+      .select("*")
       .eq("id", id)
       .single()
 
