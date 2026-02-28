@@ -373,7 +373,7 @@ export default function SplitPage() {
 
         {/* Event title */}
         <header className="text-center space-y-1 pb-1">
-          <h1 className="text-2xl font-bold">{data.title}</h1>
+          <h1 className="text-2xl font-bold" style={{ wordBreak: "break-word" }}>{data.title}</h1>
           <p className="text-sm" style={{ color: "var(--text-2)" }}>
             شارك الرابط مع المجموعة وتابع المدفوعات
           </p>
@@ -382,17 +382,17 @@ export default function SplitPage() {
         {/* Summary card */}
         <div className="card space-y-5">
           <div className="flex items-end justify-between gap-4">
-            <div>
+            <div style={{ minWidth: 0 }}>
               <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>حصة الشخص</p>
-              <div className="font-black leading-none" style={{ fontSize: 40 }}>
+              <div className="font-black leading-none" style={{ fontSize: 36 }}>
                 <span style={{ color: "var(--primary)" }}>{share.toFixed(2)}</span>
-                <span className="text-xl font-normal mr-1" style={{ color: "var(--text-2)" }}>ريال</span>
+                <span className="text-lg font-normal mr-1" style={{ color: "var(--text-2)" }}>ريال</span>
               </div>
             </div>
             {remainingText && (
-              <div className="text-left shrink-0">
+              <div style={{ textAlign: "left", flexShrink: 0, maxWidth: "55%", minWidth: 0 }}>
                 <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>الموعد</p>
-                <p className="font-semibold text-sm leading-snug">{remainingText}</p>
+                <p className="font-semibold text-sm leading-snug" style={{ wordBreak: "break-word" }}>{remainingText}</p>
               </div>
             )}
           </div>
@@ -489,11 +489,12 @@ export default function SplitPage() {
                     <div>
                       <p className="label">رقم الآيبان</p>
                       <p style={{
-                        fontSize: 15, fontWeight: 600,
+                        fontSize: 14, fontWeight: 600,
                         color: "var(--text-1)",
                         direction: "ltr", textAlign: "left",
-                        letterSpacing: "0.8px",
+                        letterSpacing: "0.5px",
                         fontFamily: "monospace",
+                        wordBreak: "break-all",
                       }}>
                         {data.iban}
                       </p>
@@ -552,35 +553,33 @@ export default function SplitPage() {
             <span className="text-xs" style={{ color: "var(--text-3)" }}>اضغط للتبديل</span>
           </div>
           <MemberList members={data.members} togglingId={togglingId} onToggle={togglePaid} />
-        </div>
 
-        {/* Add person — organizer only */}
-        {isOrganizer && (
-          <div className="card space-y-3">
-            <h2 className="section-title">إضافة شخص</h2>
-            <div className="flex gap-2">
-              <input
-                className="field"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addMember()}
-                placeholder="اسم الشخص"
-                disabled={isFull}
-              />
-              <button
-                className="btn btn-white"
-                onClick={addMember}
-                disabled={isFull || addingMember || !newName.trim()}
-                style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}
-              >
-                {addingMember ? <span className="spinner" /> : "+ إضافة"}
-              </button>
-            </div>
-            {isFull && (
-              <p className="text-xs" style={{ color: "var(--success)" }}>القَطّة اكتملت ✅</p>
-            )}
-          </div>
-        )}
+          {/* Add person — organizer only, inside group card */}
+          {isOrganizer && (
+            <>
+              <div style={{ height: 1, background: "var(--border)", margin: "4px -22px 0" }} />
+              <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
+                <input
+                  className="field"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addMember()}
+                  placeholder={isFull ? "القَطّة اكتملت" : "إضافة شخص…"}
+                  disabled={isFull}
+                  style={{ height: 44, fontSize: 14 }}
+                />
+                <button
+                  className="btn btn-white"
+                  onClick={addMember}
+                  disabled={isFull || addingMember || !newName.trim()}
+                  style={{ width: "auto", padding: "0 16px", flexShrink: 0, height: 44, fontSize: 14 }}
+                >
+                  {addingMember ? <span className="spinner" style={{ width: 16, height: 16 }} /> : "+ إضافة"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Share actions */}
         <div className="space-y-2">
