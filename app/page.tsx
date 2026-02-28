@@ -23,18 +23,18 @@ export default function Home() {
             className="font-black tracking-tight"
             style={{ fontSize: 64, lineHeight: 1, color: "var(--primary)" }}
           >
-            قِطّة
+            قَطّة
           </div>
           <h1 className="text-xl font-semibold" style={{ color: "var(--text-1)" }}>
-            نظّم القِطّة بدون إحراج
+            نظّم القَطّة بدون إحراج
           </h1>
           <p className="text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
-            خدمة بسيطة لتنظيم القِطّة بين الأصدقاء — رابط واحد، متابعة فورية، وعدّ تنازلي للموعد.
+            خدمة بسيطة لتنظيم القَطّة بين الأصدقاء — رابط واحد، متابعة فورية، وعدّ تنازلي للموعد.
           </p>
         </div>
 
         <a href="/create" className="btn btn-white" style={{ maxWidth: 280 }}>
-          ابدأ القِطّة
+          ابدأ القَطّة
         </a>
 
         <p className="text-xs" style={{ color: "var(--text-3)" }}>

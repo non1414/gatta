@@ -289,9 +289,12 @@ export default function SplitPage() {
   }
 
   // ── Share helpers ─────────────────────────────────────────────
+  const PROD_ORIGIN = "https://gatta-chi.vercel.app"
+  const shareUrl = `${PROD_ORIGIN}/s/${id}`
+
   const buildShareText = () => {
     if (!data) return ""
-    const url = window.location.href
+    const url = shareUrl
     return [
       `هذا رابط القَطّة 👇`,
       ``,

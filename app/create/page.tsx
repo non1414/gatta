@@ -84,9 +84,9 @@ export default function CreatePage() {
 
         {/* Heading */}
         <div className="text-center space-y-2 mb-6">
-          <h1 className="text-2xl font-bold">إنشاء رابط قِطّة</h1>
+          <h1 className="text-2xl font-bold">إنشاء رابط قَطّة</h1>
           <p className="text-sm leading-relaxed" style={{ color: "var(--text-2)" }}>
-            أنشئ رابط قِطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.
+            أنشئ رابط قَطّة وشاركه مع أصدقائك لتتبع المدفوعات بسهولة.
           </p>
         </div>
 
@@ -136,7 +136,7 @@ export default function CreatePage() {
               onChange={(e) => setEventAt(e.target.value)}
             />
             <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>
-              سيظهر عدّ تنازلي في صفحة القِطّة حتى الموعد.
+              سيظهر عدّ تنازلي في صفحة القَطّة حتى الموعد.
             </p>
           </div>
 
@@ -155,7 +155,7 @@ export default function CreatePage() {
           )}
 
           <button className="btn btn-white" onClick={createLink} disabled={isSubmitting}>
-            {isSubmitting ? <span className="spinner" /> : "إنشاء رابط القِطّة"}
+            {isSubmitting ? <span className="spinner" /> : "إنشاء رابط القَطّة"}
           </button>
         </div>
       </div>

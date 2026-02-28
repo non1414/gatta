@@ -22,7 +22,7 @@ export function PageHeader() {
           letterSpacing: "-0.3px",
         }}
       >
-        قِطّة
+        قَطّة
       </Link>
       <ThemeToggle />
     </div>
