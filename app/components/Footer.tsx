@@ -8,7 +8,7 @@ export function Footer() {
         padding: "28px 0 20px",
       }}
     >
-      © 2026 Gatta
+      Gatta © 2026
     </footer>
   )
 }

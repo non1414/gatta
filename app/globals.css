@@ -6,62 +6,65 @@
   --primary:        #FF6B3D;
   --primary-active: #E85A2E;
   --success:        #22C55E;
+  --btn-text:       #FFFFFF;
 
-  --bg:           #0B0F14;
-  --bg-card:      #141A22;
-  --bg-input:     #1C2430;
-  --border:       #232A34;
-  --border-focus: rgba(255, 107, 61, 0.5);
+  --bg:           #0F0F12;
+  --bg-card:      rgba(26, 26, 31, 0.72);
+  --bg-input:     #1A1A22;
+  --border:       #2A2A35;
+  --border-focus: rgba(255, 107, 61, 0.55);
 
   --text-1:       #FFFFFF;
-  --text-2:       #A1A1AA;
-  --text-3:       #52525B;
+  --text-2:       #9A9AAA;
+  --text-3:       #4A4A5A;
 
-  --shadow-card:  0 2px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px #232A34;
-  --shadow-btn:   0 4px 14px rgba(255, 107, 61, 0.3);
-  --gradient-body: radial-gradient(ellipse 80% 45% at 50% -8%, rgba(255, 107, 61, 0.08) 0%, transparent 100%);
+  --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 107, 61, 0.12);
+  --shadow-btn:   0 4px 20px rgba(255, 107, 61, 0.45);
+  --gradient-body: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 107, 61, 0.14) 0%, transparent 70%);
 }
 
-/* ─── Ocean theme ───────────────────────────────────────────── */
-[data-theme="ocean"] {
-  --primary:        #06B6D4;
-  --primary-active: #0891B2;
+/* ─── Majlis theme ──────────────────────────────────────────── */
+[data-theme="majlis"] {
+  --primary:        #E76F51;
+  --primary-active: #CF5F42;
   --success:        #22C55E;
+  --btn-text:       #FFFFFF;
 
-  --bg:           #060D18;
-  --bg-card:      #0C1828;
-  --bg-input:     #111F32;
-  --border:       #1A2F48;
-  --border-focus: rgba(6, 182, 212, 0.5);
+  --bg:           #0E0A07;
+  --bg-card:      rgba(28, 18, 10, 0.78);
+  --bg-input:     #1C1208;
+  --border:       #2E1E10;
+  --border-focus: rgba(231, 111, 81, 0.55);
 
-  --text-1:       #E8F4FF;
-  --text-2:       #7DA8C8;
-  --text-3:       #3A5A72;
+  --text-1:       #FDE8D0;
+  --text-2:       #A07050;
+  --text-3:       #503020;
 
-  --shadow-card:  0 2px 16px rgba(0, 0, 0, 0.55), 0 0 0 1px #1A2F48;
-  --shadow-btn:   0 4px 14px rgba(6, 182, 212, 0.25);
-  --gradient-body: radial-gradient(ellipse 80% 45% at 50% -8%, rgba(6, 182, 212, 0.07) 0%, transparent 100%);
+  --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(231, 111, 81, 0.14);
+  --shadow-btn:   0 4px 20px rgba(231, 111, 81, 0.45);
+  --gradient-body: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(231, 111, 81, 0.12) 0%, transparent 70%);
 }
 
-/* ─── Light theme ───────────────────────────────────────────── */
-[data-theme="light"] {
-  --primary:        #FF6B3D;
-  --primary-active: #E85A2E;
-  --success:        #16A34A;
+/* ─── Night theme ───────────────────────────────────────────── */
+[data-theme="night"] {
+  --primary:        #F2C94C;
+  --primary-active: #D4A838;
+  --success:        #22C55E;
+  --btn-text:       #1A1200;
 
-  --bg:           #F2F2F7;
-  --bg-card:      #FFFFFF;
-  --bg-input:     #F2F2F7;
-  --border:       #E5E5EA;
-  --border-focus: rgba(255, 107, 61, 0.4);
+  --bg:           #080810;
+  --bg-card:      rgba(14, 14, 24, 0.78);
+  --bg-input:     #0E0E1C;
+  --border:       #1E1E30;
+  --border-focus: rgba(242, 201, 76, 0.55);
 
-  --text-1:       #0B0B0C;
-  --text-2:       #6E6E73;
-  --text-3:       #AEAEB2;
+  --text-1:       #FFF8E0;
+  --text-2:       #8A7A55;
+  --text-3:       #403830;
 
-  --shadow-card:  0 1px 4px rgba(0, 0, 0, 0.07), 0 0 0 1px #E5E5EA;
-  --shadow-btn:   0 4px 14px rgba(255, 107, 61, 0.22);
-  --gradient-body: none;
+  --shadow-card:  0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(242, 201, 76, 0.12);
+  --shadow-btn:   0 4px 20px rgba(242, 201, 76, 0.4);
+  --gradient-body: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(242, 201, 76, 0.10) 0%, transparent 70%);
 }
 
 @theme inline {
@@ -79,8 +82,6 @@ html {
   color-scheme: dark;
 }
 
-html[data-theme="light"] { color-scheme: light; }
-
 body {
   background: var(--bg);
   background-image: var(--gradient-body);
@@ -94,6 +95,8 @@ body {
 /* ─── Card ──────────────────────────────────────────────────── */
 .card {
   background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border);
   border-radius: 20px;
   box-shadow: var(--shadow-card);
@@ -139,11 +142,11 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 16px;
+  border-radius: 18px;
   font-size: 16px;
   font-weight: 600;
   padding: 0 24px;
-  height: 56px;
+  height: 60px;
   width: 100%;
   cursor: pointer;
   font-family: inherit;
@@ -156,10 +159,10 @@ body {
 .btn:active:not(:disabled) { transform: scale(0.97); }
 .btn:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
 
-/* Primary — coral */
+/* Primary — themed */
 .btn-white {
   background: var(--primary);
-  color: #FFFFFF;
+  color: var(--btn-text);
   box-shadow: var(--shadow-btn);
 }
 .btn-white:hover:not(:disabled) {
@@ -192,6 +195,12 @@ body {
 .spinner-light {
   border-color: rgba(255, 255, 255, 0.3);
   border-top-color: #FFFFFF;
+}
+
+/* Night theme: spinner inside primary button uses dark color */
+[data-theme="night"] .btn-white .spinner {
+  border-color: rgba(0, 0, 0, 0.2);
+  border-top-color: rgba(0, 0, 0, 0.7);
 }
 
 /* ─── Progress ──────────────────────────────────────────────── */
@@ -282,7 +291,7 @@ body {
 
 .theme-btn-active {
   background: var(--primary);
-  color: #FFFFFF;
+  color: var(--btn-text);
 }
 
 .theme-btn-inactive {

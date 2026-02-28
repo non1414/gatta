@@ -152,7 +152,7 @@ export default function CreatePage() {
           )}
 
           <button className="btn btn-white" onClick={createLink} disabled={isSubmitting}>
-            {isSubmitting ? <span className="spinner" /> : "إنشاء الرابط"}
+            {isSubmitting ? <span className="spinner" /> : "إنشاء رابط القِطّة"}
           </button>
         </div>
       </div>

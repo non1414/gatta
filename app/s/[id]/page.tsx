@@ -415,6 +415,9 @@ export default function SplitPage() {
           <button className="btn btn-ghost" onClick={handleCopy}>
             نسخ رسالة المشاركة
           </button>
+          <p className="text-xs text-center pt-1" style={{ color: "var(--text-3)" }}>
+            سيُرسل الرابط مع تفاصيل القِطّة والمبلغ
+          </p>
         </div>
 
         <a href="/create" className="block text-center text-sm"
