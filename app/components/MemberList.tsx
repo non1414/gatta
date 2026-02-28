@@ -18,7 +18,7 @@ export function MemberList({ members, togglingId, onToggle }: Props) {
             key={m.id}
             onClick={() => onToggle(m.id)}
             disabled={isEmpty || isToggling}
-            className="member-row"
+            className={`member-row${m.paid ? " member-row-paid" : ""}`}
             style={isToggling ? { opacity: 0.5 } : {}}
           >
             <span

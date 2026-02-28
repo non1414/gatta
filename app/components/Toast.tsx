@@ -58,9 +58,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 }
 
 const toastStyles: Record<ToastType, { bg: string; border: string }> = {
-  success: { bg: "#14532d", border: "rgba(74,222,128,0.2)" },
-  error:   { bg: "#7f1d1d", border: "rgba(248,113,113,0.2)" },
-  info:    { bg: "#1c1c1c", border: "rgba(255,255,255,0.08)" },
+  success: { bg: "rgba(34, 197, 94, 0.12)",  border: "rgba(34, 197, 94, 0.28)" },
+  error:   { bg: "rgba(255, 107, 74, 0.12)", border: "rgba(255, 107, 74, 0.28)" },
+  info:    { bg: "#1c1c1e",                  border: "#26262A" },
 }
 
 const toastIcon: Record<ToastType, string> = {

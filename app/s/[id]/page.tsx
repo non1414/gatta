@@ -7,6 +7,7 @@ import { useToast } from "@/app/components/Toast"
 import { PaymentProgress } from "@/app/components/PaymentProgress"
 import { MemberList } from "@/app/components/MemberList"
 import type { Member, SplitData } from "@/app/lib/types"
+import { Footer } from "@/app/components/Footer"
 
 function formatRemaining(ms: number) {
   if (ms <= 0) return "وصل وقت اللقاء 🎉"
@@ -469,10 +470,8 @@ export default function SplitPage() {
           إنشاء رابط جديد
         </a>
 
-        <p className="text-center text-xs" style={{ color: "var(--text-3)" }}>
-          خدمة مجانية لتنظيم القِطّة بين الأصدقاء
-        </p>
       </div>
+      <Footer />
     </main>
   )
 }

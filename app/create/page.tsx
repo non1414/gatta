@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import { supabase } from "../lib/supabase"
 import { useToast } from "../components/Toast"
+import { Footer } from "../components/Footer"
 
 function clampInt(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -199,10 +200,8 @@ export default function CreatePage() {
           </button>
         </div>
 
-        <p className="text-center text-xs" style={{ color: "var(--text-3)" }}>
-          خدمة مجانية لتنظيم القِطّة بين الأصدقاء
-        </p>
       </div>
+      <Footer />
     </main>
   )
 }

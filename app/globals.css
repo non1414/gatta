@@ -1,16 +1,22 @@
 @import "tailwindcss";
 
-/* ─── Design tokens ─────────────────────────────────────────── */
+/* ─── Brand tokens ──────────────────────────────────────────── */
 :root {
-  --bg:           #0a0a0a;
-  --bg-card:      #131313;
-  --bg-input:     #1c1c1c;
-  --border:       rgba(255, 255, 255, 0.07);
-  --border-focus: rgba(255, 255, 255, 0.22);
-  --text-1:       #f2f2f2;
-  --text-2:       #8a8a8a;
-  --text-3:       #4a4a4a;
-  --shadow-card:  0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  --primary:        #FF6B4A;
+  --primary-active: #E85A3C;
+  --success:        #22C55E;
+
+  --bg:           #0B0B0C;
+  --bg-card:      #161618;
+  --bg-input:     #1c1c1e;
+  --border:       #26262A;
+  --border-focus: rgba(255, 107, 74, 0.45);
+
+  --text-1:       #FFFFFF;
+  --text-2:       #A1A1AA;
+  --text-3:       #71717A;
+
+  --shadow-card:  0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0 1px #26262A;
 }
 
 @theme inline {
@@ -32,7 +38,7 @@ body {
   background: var(--bg);
   background-image: radial-gradient(
     ellipse 100% 45% at 50% -5%,
-    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 107, 74, 0.04) 0%,
     transparent 100%
   );
   color: var(--text-1);
@@ -75,9 +81,8 @@ body {
 .field::placeholder { color: var(--text-3); }
 .field:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* datetime-local icon tint */
 .field[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.5);
+  filter: invert(0.4);
   cursor: pointer;
 }
 
@@ -94,7 +99,7 @@ body {
   width: 100%;
   cursor: pointer;
   font-family: inherit;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
   border: none;
   text-align: center;
   text-decoration: none;
@@ -103,17 +108,21 @@ body {
 .btn:active:not(:disabled) { transform: scale(0.975); }
 .btn:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
 
+/* Primary CTA — coral */
 .btn-white {
-  background: #f2f2f2;
-  color: #0a0a0a;
+  background: var(--primary);
+  color: #FFFFFF;
+}
+.btn-white:hover:not(:disabled) {
+  background: var(--primary-active);
 }
 
+/* Secondary / ghost — neutral */
 .btn-ghost {
   background: transparent;
   color: var(--text-1);
   border: 1px solid var(--border);
 }
-
 .btn-ghost:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.04);
 }
@@ -126,28 +135,28 @@ body {
   animation: spin 0.8s linear infinite;
   width: 18px;
   height: 18px;
-  /* Dark variant — for use inside .btn-white */
-  border: 2px solid rgba(0, 0, 0, 0.15);
-  border-top-color: #0a0a0a;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #FFFFFF;
 }
 
+/* alias kept for compatibility */
 .spinner-light {
-  /* Light variant — for use on dark surfaces */
-  border-color: rgba(255, 255, 255, 0.15);
-  border-top-color: rgba(255, 255, 255, 0.8);
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #FFFFFF;
 }
 
 /* ─── Progress bar ──────────────────────────────────────────── */
 .progress-track {
   height: 6px;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 99px;
   overflow: hidden;
 }
 
+/* Green fill — paid = success state */
 .progress-fill {
   height: 100%;
-  background: #f2f2f2;
+  background: var(--success);
   border-radius: 99px;
   transition: width 0.4s ease;
 }
@@ -166,15 +175,25 @@ body {
   background: transparent;
   color: var(--text-1);
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background 0.12s, border-color 0.12s;
 }
 
 .member-row:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .member-row:disabled {
   cursor: not-allowed;
+}
+
+/* Paid member — subtle green border */
+.member-row-paid {
+  border-color: rgba(34, 197, 94, 0.22);
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.member-row-paid:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.07);
 }
 
 /* ─── Labels ────────────────────────────────────────────────── */
