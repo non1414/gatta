@@ -64,6 +64,8 @@ export default function SplitPage() {
   const [confirmingPayment, setConfirmingPayment] = useState(false)
   const [addingMember, setAddingMember]           = useState(false)
   const [togglingId, setTogglingId]               = useState<string | null>(null)
+  const [increaseDelta, setIncreaseDelta]         = useState("1")
+  const [increasingPeople, setIncreasingPeople]   = useState(false)
   const { showToast } = useToast()
 
   // ── Organizer detection ────────────────────────────────────────
@@ -261,7 +263,7 @@ export default function SplitPage() {
       showToast("الاسم موجود بالفعل", "error"); return
     }
     const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) { showToast("القَطّة اكتملت — ما فيه مقاعد فاضية", "error"); return }
+    if (!empty) { showToast("كل المقاعد ممتلئة — استخدم «زيادة عدد الأشخاص» أولاً", "error"); return }
 
     // Optimistic — member appears immediately
     setData((prev) => patchMember(prev, empty.id, { name, paid: false }))
@@ -280,6 +282,53 @@ export default function SplitPage() {
       showToast("حدث خطأ غير متوقع", "error")
     }
     setAddingMember(false)
+  }
+
+  // ── Increase total capacity (organizer only) ─────────────────
+  const increasePeopleCount = async () => {
+    if (!data) return
+    const delta = parseInt(increaseDelta, 10)
+    if (!Number.isInteger(delta) || delta < 1) {
+      showToast("أدخل عدداً صحيحاً أكبر من صفر", "error"); return
+    }
+    const newTotal = data.people + delta
+    if (newTotal > 50) {
+      showToast(`الحد الأقصى 50 — يمكن إضافة ${50 - data.people} فقط`, "error"); return
+    }
+
+    setIncreasingPeople(true)
+
+    // Insert new empty member rows so they have real DB IDs
+    const newSlots = Array.from({ length: delta }, () => ({
+      id: crypto.randomUUID(),
+      split_id: id,
+      name: "",
+      paid: false,
+      created_at: Date.now(),
+    }))
+
+    const { error: insertErr } = await supabase.from("members").insert(newSlots)
+    if (insertErr) {
+      showToast(insertErr.message, "error")
+      setIncreasingPeople(false)
+      return
+    }
+
+    const { error: updateErr } = await supabase
+      .from("splits").update({ people: newTotal }).eq("id", id)
+    if (updateErr) {
+      showToast(updateErr.message, "error")
+      setIncreasingPeople(false)
+      return
+    }
+
+    const addedMembers: Member[] = newSlots.map((s) => ({ id: s.id, name: "", paid: false }))
+    setData((prev) => prev
+      ? { ...prev, people: newTotal, members: [...prev.members, ...addedMembers] }
+      : prev)
+    setIncreaseDelta("1")
+    showToast(`تم تحديث العدد إلى ${newTotal} 🎉`, "success")
+    setIncreasingPeople(false)
   }
 
   // ── Save bank details (organizer only) ────────────────────────
@@ -571,9 +620,10 @@ export default function SplitPage() {
           </div>
           <MemberList members={data.members} togglingId={togglingId} onToggle={togglePaid} />
 
-          {/* Add person — organizer only, inside group card */}
+          {/* Organizer-only controls */}
           {isOrganizer && (
             <>
+              {/* ── Fill an empty seat by name ── */}
               <div style={{ height: 1, background: "var(--border)", margin: "4px -22px 0" }} />
               <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
                 <input
@@ -581,7 +631,7 @@ export default function SplitPage() {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && addMember()}
-                  placeholder={isFull ? "القَطّة اكتملت" : "إضافة شخص…"}
+                  placeholder={isFull ? "استخدم زيادة الأشخاص أولاً" : "تسجيل اسم شخص…"}
                   disabled={isFull}
                   style={{ height: 44, fontSize: 14 }}
                 />
@@ -593,6 +643,39 @@ export default function SplitPage() {
                 >
                   {addingMember ? <span className="spinner" style={{ width: 16, height: 16 }} /> : "+ إضافة"}
                 </button>
+              </div>
+
+              {/* ── Increase total capacity ── */}
+              <div style={{ height: 1, background: "var(--border)", margin: "4px -22px 0" }} />
+              <div style={{ paddingTop: 4 }}>
+                <p className="label" style={{ marginBottom: 8 }}>زيادة عدد الأشخاص</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    className="field"
+                    type="number"
+                    min={1}
+                    max={50 - data.people}
+                    value={increaseDelta}
+                    onChange={(e) => setIncreaseDelta(e.target.value)}
+                    disabled={data.people >= 50}
+                    style={{ height: 44, fontSize: 16, width: 72, flexShrink: 0, textAlign: "center" }}
+                  />
+                  <button
+                    className="btn btn-ghost"
+                    onClick={increasePeopleCount}
+                    disabled={increasingPeople || data.people >= 50}
+                    style={{ flex: 1, height: 44, fontSize: 14 }}
+                  >
+                    {increasingPeople
+                      ? <span className="spinner" style={{ width: 16, height: 16, borderColor: "rgba(0,0,0,0.15)", borderTopColor: "var(--text-1)" }} />
+                      : "تأكيد الزيادة"}
+                  </button>
+                </div>
+                <p className="text-xs mt-2" style={{ color: "var(--text-3)" }}>
+                  {data.people >= 50
+                    ? "وصلت الحد الأقصى (50 شخص)"
+                    : `الإجمالي الحالي: ${data.people} شخص • الحد الأقصى: 50`}
+                </p>
               </div>
             </>
           )}
