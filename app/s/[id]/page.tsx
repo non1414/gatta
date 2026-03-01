@@ -66,10 +66,27 @@ export default function SplitPage() {
   const [togglingId, setTogglingId]               = useState<string | null>(null)
   const { showToast } = useToast()
 
-  // ── Organizer detection (localStorage flag set at creation) ───
-  const [isOrganizer, setIsOrganizer] = useState(false)
+  // ── Organizer detection ────────────────────────────────────────
+  // Lazy init: read ?org=1 param + localStorage on first render (client only).
+  // ?org=1 is injected by the create page redirect so the flag survives even
+  // if localStorage is blocked on this browser.
+  const [isOrganizer] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    const sp = new URLSearchParams(window.location.search)
+    const fromParam = sp.get("org") === "1"
+    try {
+      if (fromParam) localStorage.setItem(`gatta_org_${id}`, "1")
+      return fromParam || localStorage.getItem(`gatta_org_${id}`) === "1"
+    } catch {
+      return fromParam
+    }
+  })
+
+  // Strip ?org=1 from the URL (cosmetic, no re-render)
   useEffect(() => {
-    setIsOrganizer(localStorage.getItem(`gatta_org_${id}`) === "1")
+    if (new URLSearchParams(window.location.search).get("org") === "1") {
+      window.history.replaceState({}, "", `/s/${id}`)
+    }
   }, [id])
 
   // ── Bank transfer editing state ────────────────────────────────
