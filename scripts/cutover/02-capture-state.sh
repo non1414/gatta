@@ -34,7 +34,12 @@ export_csv table_grants.csv "select coalesce(r.rolname, 'PUBLIC') as grantee, c.
 export_csv functions.csv "select p.proname, pg_get_function_identity_arguments(p.oid) as arguments, p.prosecdef as security_definer, has_function_privilege('anon', p.oid, 'execute') as anon_can_execute, has_function_privilege('authenticated', p.oid, 'execute') as authenticated_can_execute, p.proacl::text as acl from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' order by 1, 2"
 export_csv default_privileges.csv "select pg_get_userbyid(d.defaclrole) as for_role, coalesce(n.nspname, '(all schemas)') as in_schema, d.defaclobjtype as object_type, d.defaclacl::text as acl from pg_default_acl d left join pg_namespace n on n.oid = d.defaclnamespace order by 1, 2, 3"
 export_csv extensions.csv "select e.extname, n.nspname as schema, e.extversion from pg_extension e join pg_namespace n on n.oid = e.extnamespace order by 1"
-export_csv active_splits.csv "select s.id, s.title, s.event_at, s.people, count(m.id) as seats, count(m.id) filter (where coalesce(trim(m.name), '') <> '') as joined, count(m.id) filter (where m.paid) as paid from splits s left join members m on m.split_id = s.id where s.event_at > now() - interval '14 days' group by s.id, s.title, s.event_at, s.people order by s.event_at"
+# Dates are compared as text (first 10 characters, YYYY-MM-DD): this works whether event_at is a
+# timestamp or — as on production — a text column, and nothing is cast, so an odd value cannot fail the capture.
+RECENT_EVENT="s.event_at::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' and left(s.event_at::text, 10) >= to_char(now() - interval '14 days', 'YYYY-MM-DD')"
+export_csv active_splits.csv "select s.id, s.title, s.event_at, s.people, count(m.id) as seats, count(m.id) filter (where coalesce(trim(m.name), '') <> '') as joined, count(m.id) filter (where m.paid) as paid from splits s left join members m on m.split_id = s.id where $RECENT_EVENT group by s.id, s.title, s.event_at, s.people order by s.event_at::text"
+# Shapes of the stored event_at values (digits masked as 9, so no real value is written) — needed to convert the column safely.
+export_csv event_at_formats.csv "select pg_typeof(event_at)::text as column_type, regexp_replace(event_at::text, '[0-9]', '9', 'g') as shape, count(*) as splits from splits group by 1, 2 order by 3 desc"
 if [ "$(db_value "select to_regclass('supabase_migrations.schema_migrations') is not null")" = "t" ]; then
   export_csv applied_migrations.csv "select version, name from supabase_migrations.schema_migrations order by 1"
 else
@@ -61,7 +66,7 @@ yn() { [ "$(db_value "$1")" = "t" ] && echo yes || echo NO; }
   echo "server : PostgreSQL $(db_value "select current_setting('server_version')")"
   echo
   echo "rows                                   : $(db_value "select (select count(*) from splits) || ' splits, ' || (select count(*) from members) || ' members'")"
-  echo "splits with an event in the last 14 days or later (still in use): $(db_value "select count(*) from splits where event_at > now() - interval '14 days'")"
+  echo "splits with an event in the last 14 days or later (still in use): $(db_value "select count(*) from splits s where $RECENT_EVENT")"
   echo
   echo "splits.bank_name / splits.iban exist   : $(yn "select count(*) = 2 from information_schema.columns where table_schema = 'public' and table_name = 'splits' and column_name in ('bank_name', 'iban')")   (if NO: 03 adds them first)"
   echo "new-version columns already present    : $(yn "select exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'splits' and column_name = 'manage_token_hash')")   (expected NO before cutover)"
@@ -72,6 +77,18 @@ yn() { [ "$(db_value "$1")" = "t" ] && echo yes || echo NO; }
   echo "functions in public schema             : $(db_value "select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")"
   echo "default privileges hand NEW functions to the public key: $(yn "select exists (select 1 from pg_default_acl d where d.defaclobjtype = 'f' and d.defaclacl::text ~ '(anon|authenticated)=')")   (if yes: this is exactly what migration 10 closes)"
   echo "migration history table exists         : $(yn "select to_regclass('supabase_migrations.schema_migrations') is not null")"
+  echo
+  echo "column types that differ from what the migrations were written and tested against:"
+  DIFFS="$(db_psql -t -A -c "$RO_GUARD" -c "with expected(tbl, col, typ) as (values ('splits','id','text'), ('splits','title','text'), ('splits','total','numeric'), ('splits','people','integer'), ('splits','fee_per_person','numeric'), ('splits','event_at','timestamp with time zone'), ('splits','created_at','bigint'), ('members','id','text'), ('members','split_id','text'), ('members','name','text'), ('members','paid','boolean'), ('members','created_at','bigint')) select '  ⚠️  ' || e.tbl || '.' || e.col || ': is ' || coalesce(format_type(a.atttypid, a.atttypmod), 'MISSING') || ', expected ' || e.typ from expected e left join pg_class c on c.relname = e.tbl and c.relnamespace = 'public'::regnamespace left join pg_attribute a on a.attrelid = c.oid and a.attname = e.col and not a.attisdropped where coalesce(format_type(a.atttypid, a.atttypmod), 'MISSING') <> e.typ and not (e.typ = 'numeric' and format_type(a.atttypid, a.atttypmod) like 'numeric%') order by 1")"
+  if [ -n "$DIFFS" ]; then
+    echo "$DIFFS"
+    echo "  → resolve these BEFORE 03-apply-additive.sh; a mismatch makes a migration fail (it would roll back, changing nothing)."
+  else
+    echo "  none"
+  fi
+  echo
+  echo "splits.event_at stored shapes (digits shown as 9; full list in state/event_at_formats.csv):"
+  db_psql -t -A -c "$RO_GUARD" -c "select '  ' || count(*) || ' × ' || regexp_replace(event_at::text, '[0-9]', '9', 'g') from splits group by regexp_replace(event_at::text, '[0-9]', '9', 'g') order by count(*) desc limit 8"
 } > "$S/summary.txt"
 chmod -R go-rwx "$BACKUP_DIR"
 

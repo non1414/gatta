@@ -80,6 +80,34 @@ run "" "$DIR/06-rollback-prepare.sh" --dir "$B"
 grep -q "alter table public.splits disable row level security;" "$B/rollback-restore-access.sql" && grep -q "grant select on public.members to anon;" "$B/rollback-restore-access.sql" \
   && ok "06 built rollback SQL from the captured state" || bad "06 rollback prepare" "$(echo "$OUT" | tail -3)"
 
+echo "── read-only scripts on a database whose splits.event_at is TEXT (as on real production)"
+TXT=gatta_fakeprod_text
+dropdb --if-exists $TXT; createdb $TXT
+psql -X -q -d $TXT <<'SQL'
+create table splits (id text primary key, title text not null, total numeric not null, people integer not null default 2,
+  fee_per_person numeric not null default 0, event_at text not null, created_at bigint not null, bank_name text, iban text);
+create table members (id text primary key, split_id text not null references splits(id), name text not null default '',
+  paid boolean not null default false, created_at bigint not null);
+grant all on splits, members to anon, authenticated;
+insert into splits (id, title, total, people, event_at, created_at) values
+  ('t-future', 'قادم', 100, 2, to_char(now() + interval '5 days', 'YYYY-MM-DD"T"HH24:MI:SS'), 1),
+  ('t-recent', 'قريب', 100, 2, to_char(now() - interval '3 days', 'YYYY-MM-DD"T"HH24:MI:SS"+03:00"'), 2),
+  ('t-old',    'قديم', 100, 2, '2026-03-05T20:00:00', 3),
+  ('t-odd',    'غريب', 100, 2, 'not a date', 4),
+  ('t-empty',  'فارغ', 100, 2, '', 5);
+insert into members (id, split_id, name, paid, created_at) values ('t-future-a','t-future','نوف',true,1), ('t-old-a','t-old','بدر',false,3);
+SQL
+run "" "$DIR/01-backup-readonly.sh" --target local --db $TXT
+BT="$(echo "$OUT" | sed -n 's/^✅ Backup complete (read-only): //p')"
+run "" "$DIR/02-capture-state.sh" --target local --db $TXT --dir "$BT"
+check "02 completes when event_at is text, even with unparseable values" "$RC" "0"
+check "02 lists the splits still in use by date, without casting (future + recent only)" "$(python3 -c 'import csv,sys; print(",".join(sorted(r["id"] for r in csv.DictReader(open(sys.argv[1], newline="")))))' "$BT/state/active_splits.csv")" "t-future,t-recent"
+grep -q "splits.event_at: is text, expected timestamp with time zone" "$BT/state/summary.txt" && ok "02 flags the column-type difference up front" || bad "02 type-difference report" "$(grep -A3 'column types' "$BT/state/summary.txt" | tail -3)"
+check "02 records the stored date shapes with digits masked (no real values)" "$(grep -c '9999-99-99T99:99:99' "$BT/state/event_at_formats.csv")/$(grep -c '2026' "$BT/state/event_at_formats.csv" || true)" "2/0"
+grep -q "  none" "$B/state/summary.txt" && ok "02 reports no type differences on the timestamp-typed database" || bad "02 false type difference" "$(grep -A3 'column types' "$B/state/summary.txt" | tail -3)"
+check "02 changed nothing in the text-typed database" "$(sql $TXT "select (select count(*) from splits) || '/' || (select count(*) from members) || '/' || (select data_type from information_schema.columns where table_name='splits' and column_name='event_at')")" "5/2/text"
+dropdb $TXT; rm -rf "$BT"
+
 echo "── rehearsal-load into the empty rehearsal database"
 run "wrong phrase\n" "$DIR/rehearsal-load.sh" --target local --db $REH --from "$B"
 check "wrong confirmation phrase cancels and changes nothing" "$RC/$(sql $REH "select to_regclass('public.splits') is null")" "1/t"
