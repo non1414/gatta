@@ -1,4 +1,5 @@
 import type { MemberV2 } from "../lib/types"
+import { halalasToRiyalText } from "../lib/types"
 
 type Props = {
   members: MemberV2[]
@@ -23,8 +24,8 @@ function statusText(status: MemberV2["status"]) {
   switch (status) {
     case "empty": return "مقعد فارغ"
     case "joined": return "لم يبلّغ بعد"
-    case "reported": return "أبلغ بالتحويل"
-    case "confirmed": return "تأكَّد الاستلام"
+    case "reported": return "بانتظار التأكيد"
+    case "confirmed": return "تم الاستلام"
     case "legacy_paid": return "سُجّل كمدفوع في الإصدار السابق"
     default: return ""
   }
@@ -70,9 +71,12 @@ export function MemberList({ members, myMemberId }: Props) {
                   👑 المنظّم
                 </span>
               )}
-              {!isEmpty && (
+              {(!isEmpty || typeof m.amount_halalas === "number") && (
                 <span className="text-xs" style={{ color: "var(--text-3)" }}>
-                  {statusText(m.status)}
+                  {[
+                    typeof m.amount_halalas === "number" ? `${halalasToRiyalText(m.amount_halalas)} ريال` : null,
+                    isEmpty ? null : statusText(m.status),
+                  ].filter(Boolean).join(" · ")}
                 </span>
               )}
             </div>

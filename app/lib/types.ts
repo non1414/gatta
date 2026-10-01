@@ -4,7 +4,8 @@ export type MemberV2 = {
   id: string
   name: string
   status: MemberStatus
-  amount_halalas: number
+  // الحصة المُسندة فعليًا لهذا المقعد (فارغة لقطّات الإصدار السابق)
+  amount_halalas: number | null
   is_organizer: boolean
 }
 
@@ -24,8 +25,23 @@ export type SplitV2 = {
   members: MemberV2[]
 }
 
-export function halalasToRiyalText(halalas: number): string {
-  return (halalas / 100).toFixed(2)
+export function halalasToRiyalText(halalas: number | null): string {
+  return ((halalas ?? 0) / 100).toFixed(2)
+}
+
+/**
+ * أقل وأعلى حصة مُسندة فعليًا. القسمة غير المتساوية (1000÷3) تُسند هللة زائدة
+ * لبعض المقاعد، فلا تُعرض "333.33" للجميع ومقعدٌ عليه 333.34. قطّات الإصدار
+ * السابق بلا حصص مُسندة: نعود لمتوسط المبلغ على العدد.
+ */
+export function shareRange(split: Pick<SplitV2, "total_halalas" | "people" | "members">): { min: number; max: number } {
+  const amounts = split.members.map((m) => m.amount_halalas)
+  if (amounts.length === 0 || amounts.some((a) => typeof a !== "number")) {
+    const average = perPersonHalalas(split)
+    return { min: average, max: average }
+  }
+  const assigned = amounts as number[]
+  return { min: Math.min(...assigned), max: Math.max(...assigned) }
 }
 
 /** حصة الشخص للعرض — صفر (لا Infinity/NaN) إن لم يكن هناك أي مقعد. */

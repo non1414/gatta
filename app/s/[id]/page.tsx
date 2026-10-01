@@ -9,7 +9,9 @@ import { MemberList } from "@/app/components/MemberList"
 import { Footer } from "@/app/components/Footer"
 import { PageHeader } from "@/app/components/PageHeader"
 import type { SplitV2 } from "@/app/lib/types"
-import { halalasToRiyalText, perPersonHalalas } from "@/app/lib/types"
+import { halalasToRiyalText, shareRange } from "@/app/lib/types"
+import { formatEventDate } from "@/app/lib/format"
+import { buildShareText } from "@/app/lib/share"
 import {
   getOrCreateParticipantToken, getMemberId, setMemberId, newClientRequestId, isOrganizerDevice,
 } from "@/app/lib/clientSecrets"
@@ -27,13 +29,6 @@ function formatRemaining(ms: number) {
   if (d > 0) return `${d} يوم • ${h} ساعة • ${m} دقيقة`
   if (h > 0) return `${h} ساعة • ${m} دقيقة • ${sec} ثانية`
   return `${m} دقيقة • ${sec} ثانية`
-}
-
-function formatArabicDate(isoString: string) {
-  return new Date(isoString).toLocaleDateString("ar-SA", {
-    weekday: "long", year: "numeric", month: "long",
-    day: "numeric", hour: "numeric", minute: "2-digit",
-  })
 }
 
 type LoadState = "loading" | "ok" | "not_found" | "network_error"
@@ -164,7 +159,7 @@ export default function SplitPage() {
       setReporting(false)
       return
     }
-    showToast("تم الإبلاغ عن التحويل، بانتظار تأكيد المنظّم", "success")
+    showToast("تم تسجيل تحويلك — بانتظار تأكيد المنظّم", "success")
     await load()
     setReporting(false)
   }
@@ -217,22 +212,14 @@ export default function SplitPage() {
   }
 
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/s/${id}` : `/s/${id}`
-  const buildShareText = () => {
-    if (!data) return ""
-    return [
-      `هذا رابط القَطّة 👇`, ``,
-      `المناسبة: ${data.title}`,
-      `المنظّم: ${data.organizer_name}`,
-      `المبلغ الإجمالي: ${halalasToRiyalText(data.total_halalas)} ريال`,
-      `حصة الشخص: ${halalasToRiyalText(perPersonHalalas(data))} ريال`,
-      `موعد اللقاء: ${formatArabicDate(data.event_at)}`,
-      ...(data.iban ? [``, `رقم الآيبان: ${data.iban}`] : []),
-      ``, `انضمّي/انضمّ من الرابط، وبعد التحويل اضغطي/اضغط "حوّلت حصتي"`, shareUrl,
-    ].join("\n")
+  const handleCopy = () => {
+    if (!data) return
+    navigator.clipboard.writeText(buildShareText(data, shareUrl))
+    showToast("تم نسخ رسالة المشاركة", "success")
   }
-  const handleCopy = () => { navigator.clipboard.writeText(buildShareText()); showToast("تم نسخ رسالة المشاركة", "success") }
   const handleWhatsApp = async () => {
-    const text = buildShareText()
+    if (!data) return
+    const text = buildShareText(data, shareUrl)
     if (navigator.share) { try { await navigator.share({ title: `قَطّة: ${data?.title}`, text }); return } catch { /* fallthrough */ } }
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank")
   }
@@ -278,7 +265,12 @@ export default function SplitPage() {
     )
   }
 
-  const shareHalalas = perPersonHalalas(data)
+  // حصة صاحب هذا المتصفح بالضبط إن كان له مقعد (مشارك، أو منظّم مشارك)؛ وإلا
+  // فالحصص المُسندة فعليًا — رقم واحد إن تساوت، أو مداها إن اختلفت بهللة.
+  const mySeat = myMember ?? (organizerDevice ? organizerSeat : null)
+  const range = shareRange(data)
+  const myShare = mySeat && typeof mySeat.amount_halalas === "number" ? mySeat.amount_halalas : null
+  const unevenShares = myShare === null && range.min !== range.max
 
   return (
     <main className="min-h-dvh px-4 py-8 sm:py-12">
@@ -314,17 +306,29 @@ export default function SplitPage() {
             <span className="text-sm" style={{ color: "var(--text-2)" }}>المبلغ الإجمالي</span>
             <span className="font-bold">{halalasToRiyalText(data.total_halalas)} ريال</span>
           </div>
-          <div className="flex items-end justify-between gap-4">
-            <div style={{ minWidth: 0 }}>
-              <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>حصة الشخص</p>
-              <div className="font-black leading-none" style={{ fontSize: 36 }}>
-                <span style={{ color: "var(--primary)" }}>{halalasToRiyalText(shareHalalas)}</span>
+          {/* مدى الحصص أعرض من رقم واحد: يأخذ سطرًا كاملًا والموعد تحته، بدل انكسار الأرقام */}
+          <div className="flex items-end justify-between gap-4" style={unevenShares ? { flexWrap: "wrap", rowGap: 14 } : undefined}>
+            <div style={{ minWidth: 0, flex: unevenShares ? "1 1 100%" : undefined }}>
+              <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>{myShare !== null ? "حصتك" : "حصة الشخص"}</p>
+              <div className="font-black leading-none" style={{ fontSize: unevenShares ? 24 : 36 }}>
+                <span style={{ color: "var(--primary)" }}>
+                  {myShare !== null
+                    ? halalasToRiyalText(myShare)
+                    : unevenShares
+                      ? `${halalasToRiyalText(range.min)} – ${halalasToRiyalText(range.max)}`
+                      : halalasToRiyalText(range.min)}
+                </span>
                 <span className="text-lg font-normal mr-1" style={{ color: "var(--text-2)" }}>ريال</span>
               </div>
+              {unevenShares && (
+                <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>تختلف بهللة حسب المقعد — التفاصيل في المجموعة</p>
+              )}
             </div>
-            <div style={{ textAlign: "left", flexShrink: 0, maxWidth: "55%", minWidth: 0 }}>
+            <div style={unevenShares
+              ? { textAlign: "start", minWidth: 0 }
+              : { textAlign: "left", flexShrink: 0, maxWidth: "55%", minWidth: 0 }}>
               <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>الموعد</p>
-              <p className="font-semibold text-sm leading-snug" style={{ wordBreak: "break-word" }}>{formatArabicDate(data.event_at)}</p>
+              <p className="font-semibold text-sm leading-snug" style={{ wordBreak: "break-word" }}>{formatEventDate(data.event_at)}</p>
               {remainingText && <p className="text-xs" style={{ color: "var(--text-3)" }}>{remainingText}</p>}
             </div>
           </div>
@@ -379,7 +383,7 @@ export default function SplitPage() {
                 )}
                 {myMember.status === "reported" && (
                   <>
-                    <p className="text-sm" style={{ color: "var(--text-2)" }}>بانتظار تأكيد المنظّم للاستلام.</p>
+                    <p className="text-sm" style={{ color: "var(--text-2)" }}>سجّلنا تحويلك — بانتظار تأكيد المنظّم.</p>
                     <button className="btn btn-ghost" onClick={retractTransfer} disabled={reporting}>
                       {reporting ? <span className="spinner" style={{ borderColor: "var(--border)", borderTopColor: "var(--text-1)" }} /> : "تراجع عن الإبلاغ"}
                     </button>
@@ -404,11 +408,11 @@ export default function SplitPage() {
             ) : (
               <>
                 <h2 className="section-title" style={{ marginBottom: 0 }}>
-                  {hasEmptySeat ? "الانضمام للقطّة" : "اكتملت القطّة"}
+                  {hasEmptySeat ? "الانضمام للقطّة" : "اكتمل العدد"}
                 </h2>
                 {!hasEmptySeat ? (
                   <p className="text-sm" style={{ color: "var(--text-2)" }}>
-                    لا توجد مقاعد متاحة — انضمّ كل المشاركين. إن رغبتِ/رغبتَ بالمشاركة تواصلي/تواصل مع المنظّم.
+                    كل المقاعد محجوزة. للمشاركة يمكن التواصل مع المنظّم.
                   </p>
                 ) : (
                   <div className="flex gap-2">

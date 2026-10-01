@@ -5,7 +5,9 @@ import { useEffect, useState, useCallback, useRef } from "react"
 import { useToast } from "@/app/components/Toast"
 import { Footer } from "@/app/components/Footer"
 import type { MemberV2, SplitV2 } from "@/app/lib/types"
-import { halalasToRiyalText, perPersonHalalas } from "@/app/lib/types"
+import { halalasToRiyalText } from "@/app/lib/types"
+import { formatEventDate, formatTime } from "@/app/lib/format"
+import { buildShareText } from "@/app/lib/share"
 import { usePolling } from "@/app/lib/usePolling"
 import { errorMessageAr } from "@/app/lib/errorMessages"
 import { isOrganizerDevice, markOrganizerDevice } from "@/app/lib/clientSecrets"
@@ -18,30 +20,6 @@ const SPLIT_HEADER = "x-gatta-split"
 type Phase = "loading" | "ok" | "locked" | "error"
 // no_session: لا جلسة ولا رابط · invalid_link: رابط/توكن مرفوض · expired: جلسة كانت فعّالة وانتهت
 type LockReason = "no_session" | "invalid_link" | "expired"
-
-function buildShareText(data: SplitV2, shareUrl: string) {
-  return [
-    `هذا رابط القَطّة 👇`, ``,
-    `المناسبة: ${data.title}`,
-    `المنظّم: ${data.organizer_name}`,
-    `المبلغ الإجمالي: ${halalasToRiyalText(data.total_halalas)} ريال`,
-    `حصة الشخص: ${halalasToRiyalText(perPersonHalalas(data))} ريال`,
-    `موعد اللقاء: ${new Date(data.event_at).toLocaleString("ar-SA")}`,
-    ...(data.iban ? [``, `رقم الآيبان: ${data.iban}`] : []),
-    ``, `انضمّي/انضمّ من الرابط، وبعد التحويل اضغطي/اضغط "حوّلت حصتي"`, shareUrl,
-  ].join("\n")
-}
-
-function formatArabicDate(isoString: string) {
-  return new Date(isoString).toLocaleDateString("ar-SA", {
-    weekday: "long", year: "numeric", month: "long",
-    day: "numeric", hour: "numeric", minute: "2-digit",
-  })
-}
-
-function formatArabicTime(isoString: string) {
-  return new Date(isoString).toLocaleTimeString("ar-SA", { hour: "numeric", minute: "2-digit" })
-}
 
 export default function ManagePage() {
   const params = useParams()
@@ -231,7 +209,7 @@ export default function ManagePage() {
     try {
       await navigator.clipboard.writeText(manageLink)
       setLinkCopied(true)
-      showToast("تم نسخ رابط الإدارة — احفظه في مكان خاص بك", "success")
+      showToast("تم نسخ رابط الإدارة", "success")
     } catch {
       // النسخ التلقائي غير متاح على هذا المتصفح: نعرض الرابط للنسخ اليدوي
       setShowLinkField(true)
@@ -246,7 +224,7 @@ export default function ManagePage() {
       setLinkCopied(false)
       setShowLinkField(false)
       setConfirmRotate(false)
-      showToast("صدر رابط إدارة جديد — انسخه واحفظه الآن", "success")
+      showToast("صدر رابط إدارة جديد — احفظه الآن", "success")
     } catch (e) {
       fail(e, "تعذّر إصدار رابط جديد — أعيدي/أعد المحاولة")
     }
@@ -369,7 +347,10 @@ export default function ManagePage() {
   }
 
   const locked = !!data.reporting_started_at
-  const smallBtn = { height: 36, width: "auto", padding: "0 10px", fontSize: 12, borderRadius: 10 } as const
+  const paidCount = data.members.filter((m) => m.status === "confirmed").length
+  const complete = data.members.length > 0 && paidCount === data.members.length
+  // 44px: الحد الأدنى المريح لهدف اللمس على الجوال
+  const smallBtn = { height: 44, width: "auto", padding: "0 14px", fontSize: 13, borderRadius: 12 } as const
 
   return (
     <main className="min-h-dvh px-4 py-8 sm:py-12">
@@ -383,12 +364,12 @@ export default function ManagePage() {
               : { background: "var(--toast-error-bg)", border: "1px solid var(--toast-error-border)" }}
           >
             <h2 className="font-semibold" style={{ fontSize: 15, color: linkCopied ? "var(--text-1)" : "var(--toast-error-text)" }}>
-              {linkCopied ? "✅ نُسخ رابط الإدارة — احفظه الآن في مكان خاص بك" : "🔑 احفظ رابط الإدارة قبل أي شيء"}
+              {linkCopied ? "✅ تم نسخ رابط الإدارة" : "🔑 احفظ رابط الإدارة أولًا"}
             </h2>
             <p className="text-sm" style={{ color: linkCopied ? "var(--text-2)" : "var(--toast-error-text)", lineHeight: 1.7 }}>
-              رابط الإدارة السرّي هو الطريقة الوحيدة لفتح هذه اللوحة من جهاز آخر، أو من هذا المتصفح بعد
-              انتهاء الجلسة (8 ساعات). الصقه في الملاحظات أو أرسله لنفسك — ولا تشاركه مع أحد: من يملكه
-              يدير القطّة بالكامل.
+              {linkCopied
+                ? "الصقه الآن في الملاحظات أو أرسله لنفسك. لا تشاركه مع أحد — من يملكه يدير القطّة."
+                : "هذا الرابط مفتاحك لفتح اللوحة من جهاز آخر، أو بعد انتهاء الجلسة (8 ساعات). لا تشاركه مع أحد — من يملكه يدير القطّة."}
             </p>
             <button className="btn btn-white" onClick={copyManageLink} style={{ height: 48, fontSize: 14 }}>
               {linkCopied ? "نسخ رابط الإدارة مرة أخرى" : "نسخ رابط الإدارة"}
@@ -406,8 +387,7 @@ export default function ManagePage() {
             <h2 className="section-title" style={{ marginBottom: 0 }}>رابط الإدارة</h2>
             <p className="text-sm" style={{ color: "var(--text-2)", lineHeight: 1.7 }}>
               لحمايتك لا يُعرض رابط الإدارة بعد فتحه.
-              {expiresAt && ` جلسة هذا المتصفح مستمرة حتى ${formatArabicTime(expiresAt)}، وبعدها تحتاج الرابط لفتح اللوحة.`}
-              {" "}إن كان الرابط محفوظًا لديك فلا حاجة لأي إجراء.
+              {expiresAt && ` جلسة هذا المتصفح مستمرة حتى ${formatTime(expiresAt)}، وبعدها يلزم الرابط لفتح اللوحة.`}
             </p>
             {confirmRotate ? (
               <>
@@ -491,7 +471,13 @@ export default function ManagePage() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm" style={{ color: "var(--text-2)" }}>الموعد</span>
-            <span className="font-semibold text-sm">{formatArabicDate(data.event_at)}</span>
+            <span className="font-semibold text-sm">{formatEventDate(data.event_at)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm" style={{ color: "var(--text-2)" }}>تم الدفع</span>
+            <span className="font-bold" style={{ color: complete ? "var(--success)" : undefined }}>
+              {complete ? `اكتمل الدفع ✅ ${paidCount} من ${data.people}` : `${paidCount} من ${data.people}`}
+            </span>
           </div>
           {locked && (
             <p className="text-xs pt-1" style={{ color: "var(--text-3)" }}>
@@ -526,8 +512,8 @@ export default function ManagePage() {
           <h2 className="section-title" style={{ marginBottom: 0 }}>الأعضاء</h2>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {data.members.map((m) => (
-              <div key={m.id} className="member-row" style={{ cursor: "default" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div key={m.id} className="member-row" style={{ cursor: "default", flexWrap: "wrap", padding: "8px 14px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: "1 1 150px", minWidth: 0 }}>
                   <span style={{ fontSize: 14, fontWeight: 500 }}>
                     {m.name || "مقعد فارغ"} {m.is_organizer && "👑"}
                   </span>
@@ -542,7 +528,7 @@ export default function ManagePage() {
                     </span>
                   )}
                 </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0, position: "relative" }}>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0, position: "relative", marginInlineStart: "auto" }}>
                   {m.is_organizer && m.status !== "confirmed" && m.status !== "empty" && (
                     <button className="btn-ghost" style={smallBtn}
                       onClick={() => setOrganizerPaid(m.id, true)} disabled={busyMemberId === m.id}>
@@ -558,7 +544,7 @@ export default function ManagePage() {
                   {!m.is_organizer && m.status === "reported" && (
                     <button className="btn-ghost" style={smallBtn}
                       onClick={() => confirmReceipt(m.id, true)} disabled={busyMemberId === m.id}>
-                      تأكيد وصول المبلغ
+                      تأكيد الاستلام
                     </button>
                   )}
                   {!m.is_organizer && m.status === "confirmed" && (
@@ -577,7 +563,7 @@ export default function ManagePage() {
                     <div style={{ position: "relative" }}>
                       <button
                         className="btn-ghost"
-                        style={{ height: 36, width: 36, padding: 0, fontSize: 16, borderRadius: 10 }}
+                        style={{ height: 44, width: 44, padding: 0, fontSize: 18, borderRadius: 12 }}
                         onClick={(e) => { e.stopPropagation(); setOpenMenuId((prev) => (prev === m.id ? null : m.id)) }}
                         disabled={busyMemberId === m.id}
                         aria-label="خيارات إضافية"
@@ -588,7 +574,7 @@ export default function ManagePage() {
                         <div
                           onClick={(e) => e.stopPropagation()}
                           style={{
-                            position: "absolute", top: 40, left: 0, zIndex: 10, minWidth: 220,
+                            position: "absolute", top: 48, left: 0, zIndex: 10, minWidth: 220,
                             background: "var(--bg-card)", border: "1px solid var(--border)",
                             borderRadius: 12, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", padding: 6,
                           }}
@@ -598,7 +584,7 @@ export default function ManagePage() {
                             disabled={busyMemberId === m.id}
                             style={{
                               display: "block", width: "100%", textAlign: "start", background: "none",
-                              border: "none", cursor: "pointer", padding: "8px 10px", fontSize: 13,
+                              border: "none", cursor: "pointer", padding: "0 10px", minHeight: 44, fontSize: 13,
                               borderRadius: 8, color: "var(--text-1)",
                             }}
                           >
@@ -657,15 +643,15 @@ export default function ManagePage() {
 const LOCK_TEXT: Record<LockReason, { title: string; body: string }> = {
   expired: {
     title: "انتهت جلسة الإدارة",
-    body: "لحمايتك تنتهي جلسة الإدارة تلقائيًا بعد 8 ساعات. الصقي/الصق رابط الإدارة الذي حفظته لفتح اللوحة من جديد.",
+    body: "تنتهي الجلسة تلقائيًا بعد 8 ساعات لحمايتك. يلزم رابط الإدارة المحفوظ لفتح اللوحة من جديد.",
   },
   no_session: {
     title: "لوحة الإدارة تحتاج رابط الإدارة",
-    body: "هذه الصفحة خاصة بمنظّم القطّة. الصقي/الصق رابط الإدارة السرّي الذي حفظته عند إنشاء القطّة.",
+    body: "هذه الصفحة خاصة بمنظّم القطّة، ويلزم لفتحها رابط الإدارة المحفوظ عند إنشاء القطّة.",
   },
   invalid_link: {
     title: "رابط الإدارة غير صحيح",
-    body: "قد يكون الرابط ناقصًا، أو صدر بعده رابط إدارة أحدث فتوقّف هذا عن العمل. الصقي/الصق أحدث رابط إدارة لديك.",
+    body: "قد يكون الرابط ناقصًا، أو صدر بعده رابط أحدث فتوقّف عن العمل. يلزم أحدث رابط إدارة محفوظ.",
   },
 }
 
@@ -684,7 +670,7 @@ function ManageLocked({ reason, splitId, onToken }: {
     const token = raw.includes("#") ? raw.slice(raw.lastIndexOf("#") + 1) : raw
     const linkedId = raw.match(/\/m\/([^#/?\s]+)/)?.[1]
     if (!/^[0-9a-f]{64}$/i.test(token)) {
-      setError("هذا ليس رابط إدارة كاملًا — الصقي/الصق الرابط كما حفظته، بما فيه الجزء بعد علامة #")
+      setError("هذا ليس رابط إدارة كاملًا — يلزم الرابط كما حُفظ، بما فيه الجزء بعد علامة #")
       return
     }
     setError("")
@@ -711,8 +697,7 @@ function ManageLocked({ reason, splitId, onToken }: {
         </div>
         <button className="btn btn-white" onClick={submit} disabled={!value.trim()}>فتح لوحة الإدارة</button>
         <p className="text-xs" style={{ color: "var(--text-3)", lineHeight: 1.7 }}>
-          إن لم يكن الرابط محفوظًا لديك فلا يمكن استرجاعه من هنا. ما زال بإمكانك متابعة القطّة من صفحة
-          المشاركة.
+          إن لم يكن الرابط محفوظًا فلا يمكن استرجاعه من هنا. تبقى متابعة القطّة ممكنة من صفحة المشاركة.
         </p>
         <a href={`/s/${splitId}`} className="btn btn-ghost" style={{ height: 48, fontSize: 14 }}>فتح صفحة المشاركة</a>
       </div>
@@ -728,8 +713,8 @@ function statusLabel(m: MemberV2) {
   switch (m.status) {
     case "empty": return "مقعد فارغ"
     case "joined": return "انضمّ — لم يُبلَّغ بعد"
-    case "reported": return "أبلغ بالتحويل — بانتظار التأكيد"
-    case "confirmed": return "تأكَّد الاستلام ✅"
+    case "reported": return "أبلغ بالتحويل — بانتظار تأكيدك"
+    case "confirmed": return "تم الاستلام ✅"
     case "legacy_paid": return "سُجّل كمدفوع في الإصدار السابق"
     default: return m.status
   }

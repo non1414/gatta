@@ -7,13 +7,14 @@ type Props = {
 
 export function PaymentProgress({ paidCount, joinedCount, totalPeople, isFull }: Props) {
   const progress = totalPeople > 0 ? Math.round((paidCount / totalPeople) * 100) : 0
+  const complete = totalPeople > 0 && paidCount === totalPeople
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {/* Top row: label + percentage */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-1)" }}>
-          تم الدفع {paidCount} من {totalPeople}
+        <span style={{ fontSize: 14, fontWeight: 600, color: complete ? "var(--success)" : "var(--text-1)" }}>
+          {complete ? `اكتمل الدفع ✅ ${paidCount} من ${totalPeople}` : `تم الدفع ${paidCount} من ${totalPeople}`}
         </span>
         <span
           style={{

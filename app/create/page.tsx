@@ -44,9 +44,13 @@ export default function CreatePage() {
     return Number.isFinite(t) && t > 0 ? t : 0
   }, [total])
 
+  // نفس توزيع القاعدة بالضبط: الباقي بالهللات يُسند لبعض المقاعد (هللة لكلٍّ)
   const previewShare = useMemo(() => {
     if (totalNum <= 0 || peopleNum < MIN_PEOPLE) return null
-    return (totalNum / peopleNum).toFixed(2)
+    const totalHalalas = Math.round(totalNum * 100)
+    const base = Math.floor(totalHalalas / peopleNum)
+    const low = (base / 100).toFixed(2)
+    return totalHalalas % peopleNum === 0 ? low : `${low} – ${((base + 1) / 100).toFixed(2)}`
   }, [totalNum, peopleNum])
 
   const createLink = async () => {
