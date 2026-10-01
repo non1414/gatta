@@ -1,38 +1,52 @@
-import type { Member } from "../lib/types"
+import type { MemberV2 } from "../lib/types"
 
 type Props = {
-  members: Member[]
-  togglingId: string | null
-  onToggle: (memberId: string) => void
+  members: MemberV2[]
+  myMemberId: string | null
 }
 
-export function MemberList({ members, togglingId, onToggle }: Props) {
-  // Sort: named members first (organizer at top), empty slots last
-  const named  = members.filter((m) => m.name.trim().length > 0)
-  const empty  = members.filter((m) => m.name.trim().length === 0)
-  const sorted = [...named, ...empty]
+function statusIcon(status: MemberV2["status"]) {
+  switch (status) {
+    case "confirmed":
+    case "legacy_paid":
+      return "✅"
+    case "reported":
+      return "🕓"
+    case "joined":
+      return "⏳"
+    default:
+      return null
+  }
+}
 
-  // First named member = organizer (crown)
-  const organizerId = named[0]?.id ?? null
+function statusText(status: MemberV2["status"]) {
+  switch (status) {
+    case "empty": return "مقعد فارغ"
+    case "joined": return "لم يبلّغ بعد"
+    case "reported": return "أبلغ بالتحويل"
+    case "confirmed": return "تأكَّد الاستلام"
+    case "legacy_paid": return "سُجّل كمدفوع في الإصدار السابق"
+    default: return ""
+  }
+}
+
+export function MemberList({ members, myMemberId }: Props) {
+  const named = members.filter((m) => m.status !== "empty")
+  const empty = members.filter((m) => m.status === "empty")
+  const sorted = [...named, ...empty]
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 340, overflowY: "auto" }}>
       {sorted.map((m) => {
-        const isEmpty    = m.name.trim().length === 0
-        const isToggling = togglingId === m.id
-        const isOrganizer = !isEmpty && m.id === organizerId
-        // Number empty slots sequentially within the empty group
-        const emptyNum   = isEmpty ? empty.indexOf(m) + 1 : null
+        const isEmpty = m.status === "empty"
+        const isMine = m.id === myMemberId
 
         return (
-          <button
+          <div
             key={m.id}
-            onClick={() => onToggle(m.id)}
-            disabled={isEmpty || isToggling}
-            className={`member-row${!isEmpty && m.paid ? " member-row-paid" : ""}`}
-            style={isToggling ? { opacity: 0.5 } : {}}
+            className={`member-row${m.status === "confirmed" || m.status === "legacy_paid" ? " member-row-paid" : ""}`}
+            style={{ cursor: "default", borderColor: isMine ? "var(--primary)" : undefined }}
           >
-            {/* Name + organizer badge */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span
                 style={{
@@ -41,43 +55,32 @@ export function MemberList({ members, togglingId, onToggle }: Props) {
                   color: isEmpty ? "var(--text-3)" : "var(--text-1)",
                 }}
               >
-                {isEmpty ? `بانتظار شخص (${emptyNum})` : m.name}
+                {isEmpty ? "بانتظار شخص" : m.name}
+                {isMine && " (مشاركتك)"}
               </span>
-              {isOrganizer && (
+              {m.is_organizer && (
                 <span
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 3,
-                    background: "rgba(217, 164, 65, 0.15)",
-                    border: "1px solid rgba(217, 164, 65, 0.35)",
-                    borderRadius: 6,
-                    padding: "2px 7px",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "#7A5B10",
-                    whiteSpace: "nowrap",
-                    lineHeight: 1.5,
+                    display: "inline-flex", alignItems: "center", gap: 3,
+                    background: "var(--badge-bg)", border: "1px solid var(--badge-border)",
+                    borderRadius: 6, padding: "2px 7px", fontSize: 11, fontWeight: 700,
+                    color: "var(--badge-text)", whiteSpace: "nowrap", lineHeight: 1.5,
                   }}
                 >
-                  👑 المنسّق
+                  👑 المنظّم
+                </span>
+              )}
+              {!isEmpty && (
+                <span className="text-xs" style={{ color: "var(--text-3)" }}>
+                  {statusText(m.status)}
                 </span>
               )}
             </div>
 
-            {/* Status icon */}
             <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>
-              {isToggling ? (
-                <span className="spinner spinner-light" style={{ width: 18, height: 18 }} />
-              ) : isEmpty ? (
-                <span style={{ color: "var(--text-3)", fontSize: 14 }}>—</span>
-              ) : m.paid ? (
-                "✅"
-              ) : (
-                "⏳"
-              )}
+              {isEmpty ? <span style={{ color: "var(--text-3)", fontSize: 14 }}>—</span> : statusIcon(m.status)}
             </span>
-          </button>
+          </div>
         )
       })}
     </div>

@@ -8,8 +8,12 @@ import { PaymentProgress } from "@/app/components/PaymentProgress"
 import { MemberList } from "@/app/components/MemberList"
 import { Footer } from "@/app/components/Footer"
 import { PageHeader } from "@/app/components/PageHeader"
-import { EidDecorOverlay } from "@/app/components/EidDecorOverlay"
-import type { Member, SplitData } from "@/app/lib/types"
+import type { SplitV2 } from "@/app/lib/types"
+import { halalasToRiyalText } from "@/app/lib/types"
+import {
+  getOrCreateParticipantToken, getMemberId, setMemberId, newClientRequestId,
+} from "@/app/lib/clientSecrets"
+import { usePolling } from "@/app/lib/usePolling"
 
 function formatRemaining(ms: number) {
   if (ms <= 0) return "وصل وقت اللقاء 🎉"
@@ -30,398 +34,215 @@ function formatArabicDate(isoString: string) {
   })
 }
 
-const isEmptyName = (name: string) => {
-  const t = (name ?? "").trim()
-  return t.length === 0 || t.toUpperCase() === "EMPTY"
-}
-
-function normalizeMembers(people: number, members: Member[]) {
-  const finalPeople = Math.max(2, Math.min(50, Math.floor(people || 0)))
-  const cleaned = (members || []).map((m) => ({
-    id: m.id,
-    name: isEmptyName(m.name) ? "" : String(m.name ?? ""),
-    paid: Boolean(m.paid),
-  }))
-  return Array.from({ length: finalPeople }, (_, i) =>
-    cleaned[i] ?? { id: crypto.randomUUID(), name: "", paid: false }
-  )
-}
-
-function patchMember(prev: SplitData | null, id: string, patch: Partial<Member>): SplitData | null {
-  if (!prev) return prev
-  return { ...prev, members: prev.members.map((m) => m.id === id ? { ...m, ...patch } : m) }
-}
+type LoadState = "loading" | "ok" | "not_found" | "network_error"
 
 export default function SplitPage() {
   const params = useParams()
   const id = params.id as string
-
-  const [data, setData]                           = useState<SplitData | null>(null)
-  const [myName, setMyName]                       = useState("")
-  const [newName, setNewName]                     = useState("")
-  const [now, setNow]                             = useState(() => Date.now())
-  const [loading, setLoading]                     = useState(true)
-  const [confirmingPayment, setConfirmingPayment] = useState(false)
-  const [addingMember, setAddingMember]           = useState(false)
-  const [togglingId, setTogglingId]               = useState<string | null>(null)
-  const [increaseDelta, setIncreaseDelta]         = useState("1")
-  const [increasingPeople, setIncreasingPeople]   = useState(false)
   const { showToast } = useToast()
 
-  // ── Organizer detection ────────────────────────────────────────
-  // Lazy init: read ?org=1 param + localStorage on first render (client only).
-  // ?org=1 is injected by the create page redirect so the flag survives even
-  // if localStorage is blocked on this browser.
-  const [isOrganizer] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false
-    const sp = new URLSearchParams(window.location.search)
-    const fromParam = sp.get("org") === "1"
-    try {
-      if (fromParam) localStorage.setItem(`gatta_org_${id}`, "1")
-      return fromParam || localStorage.getItem(`gatta_org_${id}`) === "1"
-    } catch {
-      return fromParam
-    }
-  })
+  const [data, setData] = useState<SplitV2 | null>(null)
+  const [loadState, setLoadState] = useState<LoadState>("loading")
+  const [now, setNow] = useState(() => Date.now())
 
-  // Strip ?org=1 from the URL (cosmetic, no re-render)
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("org") === "1") {
-      window.history.replaceState({}, "", `/s/${id}`)
-    }
-  }, [id])
+  const [joinName, setJoinName] = useState("")
+  const [joining, setJoining] = useState(false)
+  const [reporting, setReporting] = useState(false)
 
-  // ── Bank transfer editing state ────────────────────────────────
-  const [bankEdits, setBankEdits]   = useState({ name: "", iban: "" })
-  const [editingBank, setEditingBank] = useState(false)
-  const [savingBank, setSavingBank]   = useState(false)
+  const [showClaim, setShowClaim] = useState(false)
+  const [claimCode, setClaimCode] = useState("")
+  const [claiming, setClaiming] = useState(false)
 
-  // Countdown tick
+  const [stale, setStale] = useState(false)
+
+  const myMemberId = getMemberId(id)
+
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  // Initial load (up to 3 attempts, 800 ms apart)
-  const loadFromSupabase = useCallback(async () => {
-    setLoading(true)
-
-    let split = null
-    let splitErr = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await new Promise<void>((r) => setTimeout(r, 800))
-      const res = await supabase.from("splits").select("*").eq("id", id).single()
-      splitErr = res.error
-      split    = res.data
-      if (!splitErr && split) break
+  const load = useCallback(async () => {
+    try {
+      const { data: rows, error } = await supabase.rpc("get_split", { p_split_id: id })
+      if (error) { setLoadState("network_error"); return }
+      if (!rows || rows.length === 0) { setLoadState("not_found"); return }
+      setData(rows[0] as SplitV2)
+      setLoadState("ok")
+    } catch {
+      setLoadState("network_error")
     }
-
-    if (splitErr || !split) { setData(null); setLoading(false); return }
-
-    const { data: membersRows, error: memErr } = await supabase
-      .from("members")
-      .select("id,name,paid")
-      .eq("split_id", id)
-      .order("created_at", { ascending: true })
-
-    if (memErr) { setData(null); setLoading(false); return }
-
-    const bankName = String(split.bank_name ?? "")
-    const iban     = String(split.iban ?? "")
-
-    setData({
-      id: split.id,
-      title: split.title,
-      total: Number(split.total ?? 0),
-      people: Number(split.people ?? 0),
-      eventAtISO: String(split.event_at ?? ""),
-      bankName,
-      iban,
-      members: normalizeMembers(split.people, (membersRows || []) as Member[]),
-    })
-    setBankEdits({ name: bankName, iban })
-    setLoading(false)
   }, [id])
 
   useEffect(() => {
     let mounted = true
-    const load = async () => { if (mounted) await loadFromSupabase() }
-    load()
+    const run = async () => { if (mounted) await load() }
+    run()
     return () => { mounted = false }
-  }, [loadFromSupabase])
+  }, [load])
 
-  // Realtime: patch member in-place on UPDATE
-  useEffect(() => {
-    if (!id) return
-    const channel = supabase
-      .channel(`members-${id}`)
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "members", filter: `split_id=eq.${id}` },
-        (payload) => {
-          const u = payload.new as { id: string; name: string; paid: boolean }
-          setData((prev) => patchMember(prev, u.id, { name: u.name, paid: u.paid }))
-        }
-      )
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [id])
+  // تحديث بصمت (بلا مؤشر تحميل كامل، بلا مسّ الحقول): فقط بعد نجاح التحميل
+  // الأول. عند الفشل نُبقي آخر بيانات ناجحة كما هي ولا نستبدلها بأي شيء.
+  const refresh = useCallback(async () => {
+    if (loadState !== "ok") return
+    const { data: rows, error } = await supabase.rpc("get_split", { p_split_id: id })
+    if (error) throw error
+    if (rows && rows.length > 0) setData(rows[0] as SplitV2)
+  }, [id, loadState])
 
-  // Derived
-  const share = useMemo(() => {
-    if (!data || data.people <= 0) return 0
-    return data.total / data.people
-  }, [data])
+  usePolling(refresh, {
+    intervalMs: 10000,
+    onFirstError: () => { setStale(true); showToast("تعذّر تحديث البيانات — نعرض آخر نسخة معروفة", "info") },
+    onRecovered: () => setStale(false),
+  })
 
-  const paidCount   = useMemo(() => (data?.members ?? []).filter((m) => m.paid).length, [data])
-  const joinedCount = useMemo(() => (data?.members ?? []).filter((m) => m.name.trim().length > 0).length, [data])
-  const isFull      = useMemo(() => !!data && data.members.every((m) => m.name.trim().length > 0), [data])
+  const myMember = useMemo(
+    () => data?.members.find((m) => m.id === myMemberId) ?? null,
+    [data, myMemberId]
+  )
 
-  const eventAtISO = data?.eventAtISO
+  const paidCount = useMemo(
+    () => (data?.members ?? []).filter((m) => m.status === "confirmed" || m.status === "legacy_paid").length,
+    [data]
+  )
+  const joinedCount = useMemo(
+    () => (data?.members ?? []).filter((m) => m.status !== "empty").length,
+    [data]
+  )
+  const isFull = useMemo(() => !!data && data.members.every((m) => m.status !== "empty"), [data])
+
   const remainingText = useMemo(() => {
-    if (!eventAtISO) return ""
-    return formatRemaining(new Date(eventAtISO).getTime() - now)
-  }, [eventAtISO, now])
+    if (!data) return ""
+    return formatRemaining(new Date(data.event_at).getTime() - now)
+  }, [data, now])
 
-  // ── Confirm payment ───────────────────────────────────────────
-  const confirmPaid = async () => {
+  const joinSplit = async () => {
     if (!data) return
-    const name = myName.trim()
-    if (!name) { showToast("اكتب الاسم أولاً", "error"); return }
+    const name = joinName.trim()
+    if (!name) { showToast("اكتبي/اكتب اسمك أولاً", "error"); return }
 
-    setConfirmingPayment(true)
-    const lower    = name.toLowerCase()
-    const existing = data.members.find((m) => m.name.trim().toLowerCase() === lower)
-
-    if (existing) {
-      setData((prev) => patchMember(prev, existing.id, { paid: true }))
-      setMyName("")
-      const { error } = await supabase.from("members").update({ paid: true }).eq("id", existing.id)
-      if (error) {
-        setData((prev) => patchMember(prev, existing.id, { paid: false }))
-        showToast(error.message, "error")
-      } else {
-        showToast("تم تأكيد الدفع ✅", "success")
-      }
-      setConfirmingPayment(false)
+    setJoining(true)
+    const token = getOrCreateParticipantToken(id)
+    const { data: rows, error } = await supabase.rpc("join_split", {
+      p_split_id: id,
+      p_name: name,
+      p_client_request_id: newClientRequestId(),
+      p_participant_token: token,
+    })
+    if (error || !rows || rows.length === 0) {
+      showToast(error?.message ?? "تعذّر الانضمام — قد تكون القطّة اكتملت", "error")
+      setJoining(false)
       return
     }
+    setMemberId(id, rows[0].member_id as string)
+    showToast("انضممتِ للقطّة ✅", "success")
+    await load()
+    setJoining(false)
+  }
 
-    const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) {
-      showToast("القَطّة اكتملت — ما فيه مقاعد فاضية", "error")
-      setConfirmingPayment(false)
+  const reportTransfer = async () => {
+    if (!myMember) return
+    setReporting(true)
+    const token = getOrCreateParticipantToken(id)
+    const { error } = await supabase.rpc("report_transfer", { p_member_id: myMember.id, p_participant_token: token })
+    if (error) { showToast("تعذّر الإبلاغ — تحقّقي من اتصالك", "error"); setReporting(false); return }
+    showToast("تم الإبلاغ عن التحويل، بانتظار تأكيد المنظّم", "success")
+    await load()
+    setReporting(false)
+  }
+
+  const retractTransfer = async () => {
+    if (!myMember) return
+    setReporting(true)
+    const token = getOrCreateParticipantToken(id)
+    const { error } = await supabase.rpc("retract_report", { p_member_id: myMember.id, p_participant_token: token })
+    if (error) { showToast("تعذّر التراجع", "error"); setReporting(false); return }
+    showToast("تم التراجع عن الإبلاغ", "success")
+    await load()
+    setReporting(false)
+  }
+
+  const retrieveParticipation = async () => {
+    if (!data) return
+    const code = claimCode.trim()
+    if (!code) { showToast("اكتبي/اكتب رمز استرجاع المشاركة", "error"); return }
+
+    setClaiming(true)
+    const token = getOrCreateParticipantToken(id)
+    const { data: rows, error } = await supabase.rpc("claim_seat_by_code", {
+      p_split_id: id, p_code: code, p_participant_token: token,
+    })
+    const result = rows?.[0]
+    if (error || !result?.success) {
+      showToast(result?.error_code === "too_many_attempts"
+        ? "محاولات كثيرة — اطلبي من المنظّم رمزًا جديدًا"
+        : "الرمز غير صحيح أو منتهٍ", "error")
+      setClaiming(false)
       return
     }
-
-    setData((prev) => patchMember(prev, empty.id, { name, paid: true }))
-    setMyName("")
-    try {
-      const { error } = await supabase.from("members").update({ name, paid: true }).eq("id", empty.id)
-      if (error) {
-        setData((prev) => patchMember(prev, empty.id, { name: "", paid: false }))
-        showToast(error.message, "error")
-      } else {
-        showToast("تم تأكيد الدفع وإضافة الاسم ✅", "success")
-      }
-    } catch {
-      setData((prev) => patchMember(prev, empty.id, { name: "", paid: false }))
-      showToast("حدث خطأ غير متوقع", "error")
-    }
-    setConfirmingPayment(false)
+    setMemberId(id, result.member_id as string)
+    showToast("تم استرجاع مشاركتك ✅", "success")
+    setShowClaim(false)
+    setClaimCode("")
+    await load()
+    setClaiming(false)
   }
 
-  // ── Toggle paid ───────────────────────────────────────────────
-  const togglePaid = async (memberId: string) => {
-    if (!data) return
-    const m = data.members.find((x) => x.id === memberId)
-    if (!m || m.name.trim().length === 0) return
-
-    setTogglingId(memberId)
-    const newPaid = !m.paid
-    setData((prev) => patchMember(prev, memberId, { paid: newPaid }))
-    try {
-      const { error } = await supabase.from("members").update({ paid: newPaid }).eq("id", memberId)
-      if (error) {
-        setData((prev) => patchMember(prev, memberId, { paid: m.paid }))
-        showToast(error.message, "error")
-      }
-    } catch {
-      setData((prev) => patchMember(prev, memberId, { paid: m.paid }))
-      showToast("حدث خطأ غير متوقع", "error")
-    }
-    setTogglingId(null)
-  }
-
-  // ── Add member (organizer only) ───────────────────────────────
-  const addMember = async () => {
-    if (!data) return
-    const name = newName.trim()
-    if (!name) { showToast("اكتب الاسم للإضافة", "error"); return }
-
-    if (data.members.some((m) => m.name.trim().toLowerCase() === name.toLowerCase())) {
-      showToast("الاسم موجود بالفعل", "error"); return
-    }
-    const empty = data.members.find((m) => m.name.trim().length === 0)
-    if (!empty) { showToast("كل المقاعد ممتلئة — استخدم «زيادة عدد الأشخاص» أولاً", "error"); return }
-
-    // Optimistic — member appears immediately
-    setData((prev) => patchMember(prev, empty.id, { name, paid: false }))
-    setNewName("")
-    setAddingMember(true)
-    try {
-      const { error } = await supabase.from("members").update({ name, paid: false }).eq("id", empty.id)
-      if (error) {
-        setData((prev) => patchMember(prev, empty.id, { name: "" }))
-        showToast(error.message, "error")
-      } else {
-        showToast("تم إضافة الشخص", "success")
-      }
-    } catch {
-      setData((prev) => patchMember(prev, empty.id, { name: "" }))
-      showToast("حدث خطأ غير متوقع", "error")
-    }
-    setAddingMember(false)
-  }
-
-  // ── Increase total capacity (organizer only) ─────────────────
-  const increasePeopleCount = async () => {
-    if (!data) return
-    const delta = parseInt(increaseDelta, 10)
-    if (!Number.isInteger(delta) || delta < 1) {
-      showToast("أدخل عدداً صحيحاً أكبر من صفر", "error"); return
-    }
-    const newTotal = data.people + delta
-    if (newTotal > 50) {
-      showToast(`الحد الأقصى 50 — يمكن إضافة ${50 - data.people} فقط`, "error"); return
-    }
-
-    setIncreasingPeople(true)
-
-    // Insert new empty member rows so they have real DB IDs
-    const newSlots = Array.from({ length: delta }, () => ({
-      id: crypto.randomUUID(),
-      split_id: id,
-      name: "",
-      paid: false,
-      created_at: Date.now(),
-    }))
-
-    const { error: insertErr } = await supabase.from("members").insert(newSlots)
-    if (insertErr) {
-      showToast(insertErr.message, "error")
-      setIncreasingPeople(false)
-      return
-    }
-
-    const { error: updateErr } = await supabase
-      .from("splits").update({ people: newTotal }).eq("id", id)
-    if (updateErr) {
-      showToast(updateErr.message, "error")
-      setIncreasingPeople(false)
-      return
-    }
-
-    const addedMembers: Member[] = newSlots.map((s) => ({ id: s.id, name: "", paid: false }))
-    setData((prev) => prev
-      ? { ...prev, people: newTotal, members: [...prev.members, ...addedMembers] }
-      : prev)
-    setIncreaseDelta("1")
-    showToast(`تم تحديث العدد إلى ${newTotal} 🎉`, "success")
-    setIncreasingPeople(false)
-  }
-
-  // ── Save bank details (organizer only) ────────────────────────
-  const saveBankDetails = async () => {
-    if (!data) return
-    setSavingBank(true)
-    const { error } = await supabase
-      .from("splits")
-      .update({
-        bank_name: bankEdits.name.trim() || null,
-        iban:      bankEdits.iban.trim()  || null,
-      })
-      .eq("id", id)
-    if (error) {
-      // column doesn't exist yet — migration not run
-      if (error.code === "42703" || error.message?.includes("bank_name") || error.message?.includes("iban")) {
-        showToast("شغّلي migration في Supabase أولاً (add_bank_details.sql)", "error")
-      } else {
-        showToast(error.message, "error")
-      }
-    } else {
-      const updated = { bankName: bankEdits.name.trim(), iban: bankEdits.iban.trim() }
-      setData((prev) => prev ? { ...prev, ...updated } : prev)
-      setEditingBank(false)
-      showToast("تم حفظ بيانات التحويل ✅", "success")
-    }
-    setSavingBank(false)
-  }
-
-  // ── Copy IBAN ─────────────────────────────────────────────────
-  const copyIban = () => {
-    navigator.clipboard.writeText(data?.iban ?? "")
-    showToast("تم نسخ رقم الحساب", "success")
-  }
-
-  // ── Share helpers ─────────────────────────────────────────────
-  const PROD_ORIGIN = "https://gatta-chi.vercel.app"
-  const shareUrl = `${PROD_ORIGIN}/s/${id}`
-
+  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/s/${id}` : `/s/${id}`
   const buildShareText = () => {
     if (!data) return ""
-    const url = shareUrl
     return [
-      `هذا رابط القَطّة 👇`,
-      ``,
+      `هذا رابط القَطّة 👇`, ``,
       `المناسبة: ${data.title}`,
-      `المبلغ الإجمالي: ${data.total} ريال`,
-      `حصة الشخص: ${share.toFixed(2)} ريال`,
-      `موعد اللقاء: ${formatArabicDate(data.eventAtISO)}`,
+      `المنظّم: ${data.organizer_name}`,
+      `المبلغ الإجمالي: ${halalasToRiyalText(data.total_halalas)} ريال`,
+      `حصة الشخص: ${halalasToRiyalText(data.total_halalas / data.people)} ريال`,
+      `موعد اللقاء: ${formatArabicDate(data.event_at)}`,
       ...(data.iban ? [``, `رقم الآيبان: ${data.iban}`] : []),
-      ``,
-      `اكتب اسمك واضغط "تأكيد الدفع" بعد إتمام التحويل`,
-      url,
+      ``, `انضمّي/انضمّ من الرابط، وبعد التحويل اضغطي/اضغط "حوّلت حصتي"`, shareUrl,
     ].join("\n")
   }
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(buildShareText())
-    showToast("تم نسخ رسالة المشاركة", "success")
-  }
-
+  const handleCopy = () => { navigator.clipboard.writeText(buildShareText()); showToast("تم نسخ رسالة المشاركة", "success") }
   const handleWhatsApp = async () => {
     const text = buildShareText()
-    if (navigator.share) {
-      try { await navigator.share({ title: `قَطّة: ${data?.title}`, text }); return } catch { /* fallthrough */ }
-    }
+    if (navigator.share) { try { await navigator.share({ title: `قَطّة: ${data?.title}`, text }); return } catch { /* fallthrough */ } }
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank")
   }
 
-  /* ─── Loading ──────────────────────────────────────────────── */
-  if (loading) {
+  if (loadState === "loading") {
     return (
       <main className="min-h-dvh flex items-center justify-center p-8">
         <div className="flex flex-col items-center gap-3">
-          <span className="spinner spinner-light" style={{ width: 26, height: 26 }} />
+          <span className="spinner" style={{ width: 26, height: 26, borderColor: "var(--border)", borderTopColor: "var(--primary)" }} />
           <span className="text-sm" style={{ color: "var(--text-2)" }}>جاري التحميل…</span>
         </div>
       </main>
     )
   }
 
-  /* ─── Not found ────────────────────────────────────────────── */
-  if (!data) {
+  if (loadState === "network_error") {
+    return (
+      <main className="min-h-dvh flex items-center justify-center p-8 text-center">
+        <div className="space-y-3 max-w-xs">
+          <p className="font-semibold">تعذّر الاتصال</p>
+          <p className="text-sm" style={{ color: "var(--text-2)" }}>تحقّقي من الإنترنت وأعيدي المحاولة.</p>
+          <button className="btn btn-ghost" onClick={() => { setLoadState("loading"); load() }}
+            style={{ width: "auto", display: "inline-flex", padding: "0 24px" }}>
+            إعادة المحاولة
+          </button>
+        </div>
+      </main>
+    )
+  }
+
+  if (loadState === "not_found" || !data) {
     return (
       <main className="min-h-dvh flex items-center justify-center p-8 text-center">
         <div className="space-y-3 max-w-xs">
           <div className="text-4xl">🔗</div>
           <p className="font-semibold">الرابط غير متاح</p>
-          <p className="text-sm" style={{ color: "var(--text-2)" }}>
-            تأكّد من صحة الرابط أو أنشئ رابطاً جديداً
-          </p>
-          <a href="/create" className="btn btn-ghost"
-            style={{ width: "auto", display: "inline-flex", padding: "0 24px" }}>
+          <p className="text-sm" style={{ color: "var(--text-2)" }}>تأكّدي/تأكّد من صحة الرابط أو أنشئي/أنشئ رابطاً جديداً</p>
+          <a href="/create" className="btn btn-ghost" style={{ width: "auto", display: "inline-flex", padding: "0 24px" }}>
             إنشاء رابط جديد
           </a>
         </div>
@@ -429,276 +250,164 @@ export default function SplitPage() {
     )
   }
 
-  /* ─── Main ─────────────────────────────────────────────────── */
-  return (
-    <main className="min-h-dvh px-4 py-8 sm:py-12" style={{ position: "relative" }}>
-      <EidDecorOverlay />
-      <div className="mx-auto max-w-md space-y-4">
+  const shareHalalas = data.total_halalas / data.people
 
+  return (
+    <main className="min-h-dvh px-4 py-8 sm:py-12">
+      <div className="mx-auto max-w-md space-y-4">
         <PageHeader />
 
-        {/* Event title */}
+        {stale && (
+          <div className="rounded-2xl p-2.5 text-xs text-center" style={{ background: "var(--toast-info-bg)", border: "1px solid var(--toast-info-border)", color: "var(--toast-info-text)" }}>
+            تعذّر آخر تحديث — تُعرض آخر بيانات معروفة، نحاول مجددًا تلقائيًا
+          </div>
+        )}
+
+        {data.is_legacy && (
+          <div className="rounded-2xl p-3 text-sm text-center" style={{ background: "var(--surface2)", border: "1px solid var(--border)", color: "var(--text-2)" }}>
+            هذه قطّة من إصدار سابق — للعرض فقط. لا يمكن الانضمام أو الإبلاغ عن تحويل جديد هنا.
+            <div className="pt-2">
+              <a href="/create" className="btn btn-ghost" style={{ height: 40, width: "auto", display: "inline-flex", padding: "0 20px", fontSize: 13 }}>
+                إنشاء قطّة جديدة
+              </a>
+            </div>
+          </div>
+        )}
+
         <header className="text-center space-y-1 pb-1">
           <h1 className="text-2xl font-bold" style={{ wordBreak: "break-word" }}>{data.title}</h1>
-          <p className="text-sm" style={{ color: "var(--text-2)" }}>
-            شارك الرابط مع المجموعة وتابع المدفوعات
-          </p>
+          {data.organizer_name && (
+            <p className="text-sm" style={{ color: "var(--text-2)" }}>المنظّم: {data.organizer_name}</p>
+          )}
         </header>
 
-        {/* Summary card */}
-        <div className="card space-y-5">
+        <div className="card space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm" style={{ color: "var(--text-2)" }}>المبلغ الإجمالي</span>
+            <span className="font-bold">{halalasToRiyalText(data.total_halalas)} ريال</span>
+          </div>
           <div className="flex items-end justify-between gap-4">
             <div style={{ minWidth: 0 }}>
               <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>حصة الشخص</p>
               <div className="font-black leading-none" style={{ fontSize: 36 }}>
-                <span style={{ color: "var(--primary)" }}>{share.toFixed(2)}</span>
+                <span style={{ color: "var(--primary)" }}>{halalasToRiyalText(shareHalalas)}</span>
                 <span className="text-lg font-normal mr-1" style={{ color: "var(--text-2)" }}>ريال</span>
               </div>
             </div>
-            {remainingText && (
-              <div style={{ textAlign: "left", flexShrink: 0, maxWidth: "55%", minWidth: 0 }}>
-                <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>الموعد</p>
-                <p className="font-semibold text-sm leading-snug" style={{ wordBreak: "break-word" }}>{remainingText}</p>
-              </div>
-            )}
+            <div style={{ textAlign: "left", flexShrink: 0, maxWidth: "55%", minWidth: 0 }}>
+              <p className="text-xs mb-1" style={{ color: "var(--text-2)" }}>الموعد</p>
+              <p className="font-semibold text-sm leading-snug" style={{ wordBreak: "break-word" }}>{formatArabicDate(data.event_at)}</p>
+              {remainingText && <p className="text-xs" style={{ color: "var(--text-3)" }}>{remainingText}</p>}
+            </div>
           </div>
-
-          <PaymentProgress
-            paidCount={paidCount}
-            joinedCount={joinedCount}
-            totalPeople={data.people}
-            isFull={isFull}
-          />
+          <PaymentProgress paidCount={paidCount} joinedCount={joinedCount} totalPeople={data.people} isFull={isFull} />
         </div>
 
-        {/* ── Bank transfer card ──────────────────────────────── */}
-        {(isOrganizer || !!data.iban) && (
-          <div className="card space-y-4">
-            {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h2 className="section-title" style={{ marginBottom: 0 }}>
-                التحويل إلى حساب المنسّق
-              </h2>
-              {isOrganizer && !editingBank && (
-                <button
-                  onClick={() => setEditingBank(true)}
-                  style={{
-                    fontSize: 13, fontWeight: 600,
-                    color: "var(--primary)",
-                    background: "none", border: "none",
-                    cursor: "pointer", padding: 0,
-                    fontFamily: "inherit",
-                  }}
-                >
-                  تعديل
-                </button>
+        {/* بيانات التحويل — عرض فقط، التعديل حصرًا من لوحة إدارة المنظّم */}
+        <div className="card space-y-3">
+          <h2 className="section-title" style={{ marginBottom: 0 }}>التحويل إلى حساب المنظّم</h2>
+          {data.iban ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {data.bank_name && (
+                <div><p className="label">البنك</p><p style={{ fontSize: 15, fontWeight: 500 }}>{data.bank_name}</p></div>
               )}
-            </div>
-
-            {editingBank ? (
-              /* Edit mode — organizer only */
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label className="label">اسم البنك</label>
-                  <input
-                    className="field"
-                    value={bankEdits.name}
-                    onChange={(e) => setBankEdits((p) => ({ ...p, name: e.target.value }))}
-                    placeholder="مثال: بنك الراجحي"
-                  />
-                </div>
-                <div>
-                  <label className="label">رقم الآيبان (IBAN)</label>
-                  <input
-                    className="field"
-                    value={bankEdits.iban}
-                    onChange={(e) => setBankEdits((p) => ({ ...p, iban: e.target.value }))}
-                    placeholder="SA00 0000 0000 0000 0000 0000"
-                    style={{ direction: "ltr", textAlign: "left", letterSpacing: "0.5px" }}
-                  />
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    className="btn btn-white"
-                    onClick={saveBankDetails}
-                    disabled={savingBank}
-                    style={{ flex: 1 }}
-                  >
-                    {savingBank ? <span className="spinner" /> : "حفظ"}
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      setEditingBank(false)
-                      setBankEdits({ name: data.bankName, iban: data.iban })
-                    }}
-                    style={{ flex: 1 }}
-                  >
-                    إلغاء
-                  </button>
-                </div>
+              <div>
+                <p className="label">رقم الآيبان</p>
+                <p style={{ fontSize: 14, fontWeight: 600, direction: "ltr", textAlign: "left", fontFamily: "monospace", wordBreak: "break-all" }}>
+                  {data.iban}
+                </p>
               </div>
+              <button className="btn btn-ghost" style={{ height: 48, fontSize: 14 }}
+                onClick={() => { navigator.clipboard.writeText(data.iban ?? ""); showToast("تم نسخ رقم الحساب", "success") }}>
+                نسخ رقم الحساب
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm" style={{ color: "var(--text-2)" }}>
+              لم يُضف المنظّم بيانات التحويل بعد. تواصلي معه مباشرة لمعرفة كيفية التحويل.
+            </p>
+          )}
+          <p style={{ fontSize: 12, color: "var(--text-3)", lineHeight: 1.65 }}>
+            التحويل يتم مباشرة لحساب المنظّم ولا يمر عبر الموقع — والموقع لا يتحقق فعليًا من وصوله.
+          </p>
+        </div>
+
+        {!data.is_legacy && (
+          <div className="space-y-2">
+            <button className="btn btn-white" onClick={handleWhatsApp}>مشاركة عبر واتساب</button>
+            <button className="btn btn-ghost" onClick={handleCopy}>نسخ رسالة المشاركة</button>
+          </div>
+        )}
+
+        {!data.is_legacy && (
+          <div className="card space-y-3">
+            {myMember ? (
+              <>
+                <h2 className="section-title" style={{ marginBottom: 0 }}>مقعدك: {myMember.name}</h2>
+                {myMember.status === "joined" && (
+                  <button className="btn btn-white" onClick={reportTransfer} disabled={reporting}>
+                    {reporting ? <span className="spinner" /> : "حوّلت حصتي"}
+                  </button>
+                )}
+                {myMember.status === "reported" && (
+                  <>
+                    <p className="text-sm" style={{ color: "var(--text-2)" }}>بانتظار تأكيد المنظّم للاستلام.</p>
+                    <button className="btn btn-ghost" onClick={retractTransfer} disabled={reporting}>
+                      {reporting ? <span className="spinner" style={{ borderColor: "var(--border)", borderTopColor: "var(--text-1)" }} /> : "تراجع عن الإبلاغ"}
+                    </button>
+                  </>
+                )}
+                {myMember.status === "confirmed" && (
+                  <p className="text-sm" style={{ color: "var(--success)" }}>✅ أكّد المنظّم استلام حصتك.</p>
+                )}
+              </>
             ) : (
-              /* View mode — everyone */
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                {data.bankName && (
-                  <div>
-                    <p className="label">البنك</p>
-                    <p style={{ fontSize: 15, fontWeight: 500, color: "var(--text-1)" }}>
-                      {data.bankName}
+              <>
+                <h2 className="section-title" style={{ marginBottom: 0 }}>الانضمام للقطّة</h2>
+                <div className="flex gap-2">
+                  <input className="field" value={joinName} onChange={(e) => setJoinName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && joinSplit()} placeholder="اسمك هنا" />
+                  <button className="btn btn-white" onClick={joinSplit} disabled={!joinName.trim() || joining}
+                    style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}>
+                    {joining ? <span className="spinner" /> : "انضمام"}
+                  </button>
+                </div>
+                <button
+                  onClick={() => setShowClaim((v) => !v)}
+                  className="text-xs"
+                  style={{ background: "none", border: "none", color: "var(--text-3)", cursor: "pointer", textAlign: "start", padding: 0, textDecoration: "underline" }}
+                >
+                  سبق انضممت؟
+                </button>
+                {showClaim && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div>
+                      <label className="label">رمز استرجاع المشاركة</label>
+                      <input className="field" value={claimCode} onChange={(e) => setClaimCode(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => e.key === "Enter" && retrieveParticipation()}
+                        placeholder="الرمز الذي أرسله المنظّم" style={{ height: 44, fontSize: 14, direction: "ltr", textAlign: "center" }} />
+                    </div>
+                    <button className="btn btn-ghost" onClick={retrieveParticipation} disabled={claiming} style={{ height: 44, fontSize: 14 }}>
+                      {claiming ? <span className="spinner" style={{ width: 16, height: 16 }} /> : "استرجاع مشاركتي"}
+                    </button>
+                    <p className="text-xs" style={{ color: "var(--text-3)" }}>
+                      الاسترجاع لا يؤكد وصول المبلغ ولا يغيّر حالة الدفع أو العدد — فقط يعيد ربط اسمك المسجّل بهذا الجهاز.
                     </p>
                   </div>
                 )}
-
-                {data.iban ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    <div>
-                      <p className="label">رقم الآيبان</p>
-                      <p style={{
-                        fontSize: 14, fontWeight: 600,
-                        color: "var(--text-1)",
-                        direction: "ltr", textAlign: "left",
-                        letterSpacing: "0.5px",
-                        fontFamily: "monospace",
-                        wordBreak: "break-all",
-                      }}>
-                        {data.iban}
-                      </p>
-                    </div>
-                    <button
-                      className="btn btn-ghost"
-                      onClick={copyIban}
-                      style={{ height: 48, fontSize: 14 }}
-                    >
-                      نسخ رقم الحساب
-                    </button>
-                  </div>
-                ) : isOrganizer ? (
-                  <p style={{ fontSize: 13, color: "var(--text-3)" }}>
-                    لم تُضف بيانات التحويل بعد — اضغط &quot;تعديل&quot; لإضافتها.
-                  </p>
-                ) : null}
-
-                <p style={{ fontSize: 12, color: "var(--text-3)", lineHeight: 1.65 }}>
-                  التحويل يتم مباشرة إلى حساب المنسّق. الموقع فقط لتنظيم القَطّة.
-                </p>
-              </div>
+              </>
             )}
           </div>
         )}
 
-        {/* Confirm payment */}
         <div className="card space-y-3">
-          <h2 className="section-title">تأكيد الدفع ✅</h2>
-          <div className="flex gap-2">
-            <input
-              className="field"
-              value={myName}
-              onChange={(e) => setMyName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && confirmPaid()}
-              placeholder="اكتب اسمك هنا"
-            />
-            <button
-              className="btn btn-white"
-              onClick={confirmPaid}
-              disabled={!myName.trim() || confirmingPayment}
-              style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}
-            >
-              {confirmingPayment ? <span className="spinner" /> : "تم"}
-            </button>
-          </div>
-          <p className="text-xs" style={{ color: "var(--text-3)" }}>
-            إذا كان اسمك غير موجود، سيُضاف تلقائياً في أول مقعد فاضٍ.
-          </p>
+          <h2 className="section-title" style={{ marginBottom: 0 }}>المجموعة</h2>
+          <MemberList members={data.members} myMemberId={myMemberId} />
         </div>
 
-        {/* Member list */}
-        <div className="card space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="section-title" style={{ marginBottom: 0 }}>المجموعة</h2>
-            <span className="text-xs" style={{ color: "var(--text-3)" }}>اضغط للتبديل</span>
-          </div>
-          <MemberList members={data.members} togglingId={togglingId} onToggle={togglePaid} />
-
-          {/* Organizer-only controls */}
-          {isOrganizer && (
-            <>
-              {/* ── Fill an empty seat by name ── */}
-              <div style={{ height: 1, background: "var(--border)", margin: "4px -22px 0" }} />
-              <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
-                <input
-                  className="field"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addMember()}
-                  placeholder={isFull ? "استخدم زيادة الأشخاص أولاً" : "تسجيل اسم شخص…"}
-                  disabled={isFull}
-                  style={{ height: 44, fontSize: 14 }}
-                />
-                <button
-                  className="btn btn-white"
-                  onClick={addMember}
-                  disabled={isFull || addingMember || !newName.trim()}
-                  style={{ width: "auto", padding: "0 16px", flexShrink: 0, height: 44, fontSize: 14 }}
-                >
-                  {addingMember ? <span className="spinner" style={{ width: 16, height: 16 }} /> : "+ إضافة"}
-                </button>
-              </div>
-
-              {/* ── Increase total capacity ── */}
-              <div style={{ height: 1, background: "var(--border)", margin: "4px -22px 0" }} />
-              <div style={{ paddingTop: 4 }}>
-                <p className="label" style={{ marginBottom: 8 }}>زيادة عدد الأشخاص</p>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    className="field"
-                    type="number"
-                    min={1}
-                    max={50 - data.people}
-                    value={increaseDelta}
-                    onChange={(e) => setIncreaseDelta(e.target.value)}
-                    disabled={data.people >= 50}
-                    style={{ height: 44, fontSize: 16, width: 72, flexShrink: 0, textAlign: "center" }}
-                  />
-                  <button
-                    className="btn btn-ghost"
-                    onClick={increasePeopleCount}
-                    disabled={increasingPeople || data.people >= 50}
-                    style={{ flex: 1, height: 44, fontSize: 14 }}
-                  >
-                    {increasingPeople
-                      ? <span className="spinner" style={{ width: 16, height: 16, borderColor: "rgba(0,0,0,0.15)", borderTopColor: "var(--text-1)" }} />
-                      : "تأكيد الزيادة"}
-                  </button>
-                </div>
-                <p className="text-xs mt-2" style={{ color: "var(--text-3)" }}>
-                  {data.people >= 50
-                    ? "وصلت الحد الأقصى (50 شخص)"
-                    : `الإجمالي الحالي: ${data.people} شخص • الحد الأقصى: 50`}
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Share actions */}
-        <div className="space-y-2">
-          <button className="btn btn-white" onClick={handleWhatsApp}>
-            مشاركة عبر واتساب
-          </button>
-          <button className="btn btn-ghost" onClick={handleCopy}>
-            نسخ رسالة المشاركة
-          </button>
-          <p className="text-xs text-center pt-1" style={{ color: "var(--text-3)" }}>
-            سيُرسل الرابط مع تفاصيل القَطّة والمبلغ
-          </p>
-        </div>
-
-        <a href="/create" className="block text-center text-sm"
-          style={{ color: "var(--text-3)", textDecoration: "none" }}>
+        <a href="/create" className="block text-center text-sm" style={{ color: "var(--text-3)", textDecoration: "none" }}>
           إنشاء رابط جديد
         </a>
-
       </div>
       <Footer />
     </main>

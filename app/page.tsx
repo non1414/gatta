@@ -1,30 +1,13 @@
 import { Footer } from "./components/Footer"
-import { ThemeToggle } from "./components/ThemeToggle"
+import { Logo } from "./components/Logo"
 
 export default function Home() {
   return (
     <main className="min-h-dvh flex flex-col items-center px-6">
-      {/* Floating theme toggle */}
-      <div
-        style={{
-          position: "fixed",
-          top: 16,
-          left: 16,
-          zIndex: 20,
-        }}
-      >
-        <ThemeToggle />
-      </div>
-
       {/* Hero */}
       <div className="flex-1 flex flex-col items-center justify-center text-center gap-8 py-16">
         <div className="space-y-4" style={{ maxWidth: 320 }}>
-          <div
-            className="font-black tracking-tight"
-            style={{ fontSize: 64, lineHeight: 1, color: "var(--primary)" }}
-          >
-            قَطّة
-          </div>
+          <Logo className="h-14 sm:h-20 w-auto" />
           <h1 className="text-xl font-semibold" style={{ color: "var(--text-1)" }}>
             نظّم القَطّة بدون إحراج
           </h1>

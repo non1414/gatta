@@ -36,7 +36,7 @@ export function PaymentProgress({ paidCount, joinedCount, totalPeople, isFull }:
         <span>المنضمّون</span>
         <span>
           {joinedCount} من {totalPeople}
-          {isFull ? " · اكتملت ✅" : ""}
+          {isFull ? " · انضمّ الجميع ✅" : ""}
         </span>
       </div>
     </div>

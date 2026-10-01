@@ -58,9 +58,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 }
 
 const toastStyles: Record<ToastType, { bg: string; border: string; color: string }> = {
-  success: { bg: "#1A3D2B", border: "rgba(74, 222, 128, 0.45)", color: "#FFFFFF" },
-  error:   { bg: "#3D1212", border: "rgba(248, 113, 113, 0.45)", color: "#FFFFFF" },
-  info:    { bg: "#1C1C1E", border: "#3A3A3C",                   color: "#F2F2F2" },
+  success: { bg: "var(--toast-success-bg)", border: "var(--toast-success-border)", color: "var(--toast-success-text)" },
+  error:   { bg: "var(--toast-error-bg)",   border: "var(--toast-error-border)",   color: "var(--toast-error-text)" },
+  info:    { bg: "var(--toast-info-bg)",    border: "var(--toast-info-border)",    color: "var(--toast-info-text)" },
 }
 
 const toastIcon: Record<ToastType, string> = {
@@ -89,7 +89,7 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
         display: "flex",
         alignItems: "center",
         gap: "10px",
-        boxShadow: "0 6px 24px rgba(0,0,0,0.35)",
+        boxShadow: "var(--toast-shadow)",
         color,
         fontSize: "14px",
         direction: "rtl",
@@ -102,7 +102,8 @@ function ToastItem({ toast, onClose }: { toast: Toast; onClose: () => void }) {
         style={{
           background: "none",
           border: "none",
-          color: "rgba(255,255,255,0.55)",
+          color,
+          opacity: 0.55,
           cursor: "pointer",
           padding: "0 4px",
           fontSize: "16px",

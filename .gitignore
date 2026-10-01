@@ -32,6 +32,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# قالب بيئة الاختبار — بلا أسرار فعلية، يُقصد تتبّعه في Git كمرجع للفريق
+!.env.test.local.example
 
 # vercel
 .vercel
