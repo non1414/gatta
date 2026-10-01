@@ -41,3 +41,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# production/rehearsal data exports made by scripts/cutover (names, IBANs) — never commit
+/backups/

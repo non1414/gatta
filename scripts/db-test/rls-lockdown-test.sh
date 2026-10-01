@@ -63,7 +63,56 @@ psql -d "$DB" -c "set role service_role; select count(*) from manage_sessions;" 
   >/tmp/gatta-rls-check.log 2>&1 \
   || fail "service_role مرفوض من جدول manage_sessions مباشرة!"
 
+# ── الترحيل 10: قائمة مسموحة صريحة ───────────────────────────────────────────
+# كل دالة في public خارج الست المسموحة يجب ألا تكون قابلة للتنفيذ بالمفتاح
+# العام (anon) ولا بدور authenticated؛ والست يجب أن تبقى قابلة لـanon.
+ALLOWED="claim_seat_by_code create_split get_split join_split report_transfer retract_report"
+check_allowlist() {
+  local label="$1"
+  local open_fns
+  open_fns=$(psql -d "$DB" -t -A -c "
+    select coalesce(string_agg(distinct p.proname, ' ' order by p.proname), '')
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.prorettype not in ('trigger'::regtype, 'event_trigger'::regtype)
+      and has_function_privilege('anon', p.oid, 'execute');")
+  [ "$open_fns" = "$ALLOWED" ] || fail "$label: الدوال القابلة للتنفيذ بـanon = [$open_fns]، المتوقّع = [$ALLOWED]"
+  local auth_fns
+  auth_fns=$(psql -d "$DB" -t -A -c "
+    select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.prorettype not in ('trigger'::regtype, 'event_trigger'::regtype)
+      and has_function_privilege('authenticated', p.oid, 'execute');")
+  [ "$auth_fns" = "0" ] || fail "$label: $auth_fns دالة قابلة للتنفيذ بدور authenticated"
+  local open_tables
+  open_tables=$(psql -d "$DB" -t -A -c "
+    select count(*) from pg_tables t, unnest(array['anon','authenticated']) r,
+         unnest(array['select','insert','update','delete']) priv
+    where t.schemaname = 'public' and has_table_privilege(r, format('public.%I', t.tablename), priv);")
+  [ "$open_tables" = "0" ] || fail "$label: $open_tables صلاحية جدول مباشرة ما زالت ممنوحة للمفتاح العام"
+}
+check_allowlist "بعد الترحيلات بالترتيب"
+
+# محاكاة مشروع Supabase يمنح المفتاح العام كل شيء افتراضيًا (الحالة المحتملة في
+# مشروع الإنتاج الأقدم): نفتح كل الدوال والجداول صراحةً لـanon/authenticated،
+# نتأكد أن الفتح حقيقي، ثم نعيد تطبيق الترحيل 10 ونتأكد أنه يغلقها كلها.
+MIGRATION_10="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/supabase/migrations/00000000000010_explicit_security_revokes.sql"
+psql -d "$DB" -q -c "grant execute on all functions in schema public to anon, authenticated;
+                     grant all on all tables in schema public to anon, authenticated;" >/dev/null
+psql -d "$DB" -c "set role anon; select count(*) from splits;" >/tmp/gatta-rls-check.log 2>&1 \
+  || fail "تعذّرت محاكاة المشروع المفتوح (anon لم يستطع القراءة بعد المنح)"
+psql -d "$DB" -q -v ON_ERROR_STOP=1 -f "$MIGRATION_10" >/tmp/gatta-rls-check.log 2>&1 \
+  || fail "فشلت إعادة تطبيق الترحيل 10 (ليس idempotent؟)"
+check_allowlist "بعد محاكاة مشروع مفتوح افتراضيًا ثم الترحيل 10"
+psql -d "$DB" -c "set role anon; select admin_set_organizer_paid('x', true);" >/tmp/gatta-rls-check.log 2>&1 \
+  && fail "anon استدعى دالة إدارية بعد الترحيل 10!" || true
+grep -q "permission denied" /tmp/gatta-rls-check.log || fail "الرفض بعد الترحيل 10 لم يكن بسبب صلاحية"
+psql -d "$DB" -c "set role service_role; select admin_verify_manage_token('x','y'); select count(*) from manage_sessions;" \
+  >/tmp/gatta-rls-check.log 2>&1 || fail "الترحيل 10 كسر وصول service_role"
+psql -d "$DB" -c "set role anon; select claim_seat('x','y','z');" >/tmp/gatta-rls-check.log 2>&1 \
+  && fail "anon ما زال يستدعي claim_seat القديمة غير المستخدمة" || true
+
 rm -f /tmp/gatta-rls-check.log
+echo "PASS: الترحيل 10 — المفتاح العام ينفّذ الدوال الست المسموحة فقط، ولا يصل أي جدول"
+echo "PASS: الترحيل 10 يغلق مشروعًا مفتوحًا افتراضيًا (محاكاة) ولا يكسر service_role"
 echo "PASS: anon يُرفض من الجداول المباشرة ودوال الإدارة، ويُقبل في get_split فقط"
 echo "PASS: service_role يستطيع فعليًا استدعاء دوال الإدارة (لا permission denied)"
 echo "PASS: service_role يستطيع فعليًا الوصول لجداول الإدارة مباشرة (manage_sessions)"
