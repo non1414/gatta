@@ -5,14 +5,19 @@ import { supabase } from "../lib/supabase"
 import { useToast } from "../components/Toast"
 import { Footer } from "../components/Footer"
 import { PageHeader } from "../components/PageHeader"
-import { newClientRequestId, newManageToken } from "../lib/clientSecrets"
-
-function clampInt(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n))
-}
+import { newClientRequestId, newManageToken, markOrganizerDevice } from "../lib/clientSecrets"
+import { errorMessageAr } from "../lib/errorMessages"
+import { MIN_PEOPLE, MAX_PEOPLE, MAX_NAME_LENGTH, MAX_TITLE_LENGTH } from "../lib/validation"
 
 function toISO(datetimeLocalValue: string) {
   return new Date(datetimeLocalValue).toISOString()
+}
+
+// قيمة min لحقل datetime-local بالتوقيت المحلي (YYYY-MM-DDTHH:mm)
+function localNowForInput() {
+  const d = new Date()
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset())
+  return d.toISOString().slice(0, 16)
 }
 
 export default function CreatePage() {
@@ -23,13 +28,16 @@ export default function CreatePage() {
   const [eventAt, setEventAt] = useState("")
   const [organizerIsParticipant, setOrganizerIsParticipant] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [minEventAt] = useState(localNowForInput)
   const { showToast } = useToast()
 
+  // 0 = غير صالح (فارغ أو خارج 1–100) — لا نقصّ القيمة بصمت إلى الحد الأقصى
   const peopleNum = useMemo(() => {
     const p = Number(people)
-    if (!Number.isFinite(p) || p < 2) return 0
-    return clampInt(Math.floor(p), 2, 100)
+    if (!Number.isInteger(p) || p < MIN_PEOPLE || p > MAX_PEOPLE) return 0
+    return p
   }, [people])
+  const peopleOutOfRange = people !== "" && peopleNum === 0
 
   const totalNum = useMemo(() => {
     const t = Number(total)
@@ -37,16 +45,21 @@ export default function CreatePage() {
   }, [total])
 
   const previewShare = useMemo(() => {
-    if (totalNum <= 0 || peopleNum < 2) return null
+    if (totalNum <= 0 || peopleNum < MIN_PEOPLE) return null
     return (totalNum / peopleNum).toFixed(2)
   }, [totalNum, peopleNum])
 
   const createLink = async () => {
     if (!organizerName.trim()) { showToast("اكتبي/اكتب اسمك أولاً", "error"); return }
+    if (organizerName.trim().length > MAX_NAME_LENGTH) { showToast(errorMessageAr("name_too_long", ""), "error"); return }
     if (!title.trim())  { showToast("اكتبي/اكتب اسم المناسبة", "error"); return }
+    if (title.trim().length > MAX_TITLE_LENGTH) { showToast(errorMessageAr("title_too_long", ""), "error"); return }
     if (totalNum <= 0)  { showToast("أدخلي/أدخل مبلغاً صحيحاً", "error"); return }
-    if (peopleNum < 2)  { showToast("عدد الأشخاص لازم يكون 2 على الأقل", "error"); return }
+    if (peopleNum < MIN_PEOPLE) { showToast(errorMessageAr("invalid_people_count", ""), "error"); return }
     if (!eventAt)        { showToast("حدّدي/حدّد تاريخ ووقت اللقاء", "error"); return }
+    const eventTime = new Date(eventAt).getTime()
+    if (!Number.isFinite(eventTime)) { showToast(errorMessageAr("invalid_event_at", ""), "error"); return }
+    if (eventTime < Date.now()) { showToast(errorMessageAr("event_in_past", ""), "error"); return }
 
     setIsSubmitting(true)
 
@@ -67,12 +80,13 @@ export default function CreatePage() {
       })
 
       if (error || !data || data.length === 0) {
-        showToast(error?.message ?? "تعذّر إنشاء القطّة", "error")
+        showToast(errorMessageAr(error?.message, "تعذّر إنشاء القطّة — تحقّقي/تحقّق من اتصالك وأعيدي/أعد المحاولة"), "error")
         setIsSubmitting(false)
         return
       }
 
       const splitId = data[0].split_id as string
+      markOrganizerDevice(splitId)
       showToast("تم إنشاء القطّة", "success")
       // رابط الإدارة: المعرّف بالمسار (غير سرّي)، والتوكن بالـfragment (سرّي،
       // لا يصل الخادم أبدًا). صفحة /m تتولّى تبادله بجلسة httpOnly ومسح الرابط.
@@ -106,6 +120,7 @@ export default function CreatePage() {
               className="field"
               value={organizerName}
               onChange={(e) => setOrganizerName(e.target.value)}
+              maxLength={MAX_NAME_LENGTH}
               placeholder="أدخل اسم المنظّم"
             />
             <p className="text-xs mt-1.5" style={{ color: "var(--text-2)" }}>
@@ -119,6 +134,7 @@ export default function CreatePage() {
               className="field"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              maxLength={MAX_TITLE_LENGTH}
               placeholder="مثال: طلعة الأصدقاء"
             />
           </div>
@@ -143,7 +159,9 @@ export default function CreatePage() {
                 inputMode="numeric"
                 placeholder="8"
               />
-              <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>الحد الأقصى: 100</p>
+              <p className="text-xs mt-1.5" style={{ color: peopleOutOfRange ? "var(--toast-error-text)" : "var(--text-3)" }}>
+                {peopleOutOfRange ? "العدد يجب أن يكون بين 1 و100" : "من 1 إلى 100"}
+              </p>
             </div>
           </div>
 
@@ -173,6 +191,7 @@ export default function CreatePage() {
               type="datetime-local"
               className="field"
               value={eventAt}
+              min={minEventAt}
               onChange={(e) => setEventAt(e.target.value)}
             />
             <p className="text-xs mt-1.5" style={{ color: "var(--text-3)" }}>

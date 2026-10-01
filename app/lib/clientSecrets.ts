@@ -40,6 +40,25 @@ export function setMemberId(splitId: string, memberId: string) {
   }
 }
 
+// علامة غير سرّية: "هذا المتصفح فتح لوحة إدارة هذه القطّة". تُستخدم فقط
+// لتمييز المنظّم في صفحة المشاركة العامة (إخفاء نموذج الانضمام وإظهار رابط
+// اللوحة) — لا تمنح أي صلاحية؛ الصلاحية الفعلية تبقى لجلسة الإدارة وحدها.
+export function markOrganizerDevice(splitId: string) {
+  try {
+    localStorage.setItem(`gatta_org_${splitId}`, "1")
+  } catch {
+    /* لا شيء — صفحة المشاركة ستعامل هذا المتصفح كزائر عادي */
+  }
+}
+
+export function isOrganizerDevice(splitId: string): boolean {
+  try {
+    return localStorage.getItem(`gatta_org_${splitId}`) === "1"
+  } catch {
+    return false
+  }
+}
+
 export function newClientRequestId(): string {
   return crypto.randomUUID()
 }

@@ -25,6 +25,18 @@ psql -d "$DB" -c "set role anon; select admin_confirm_receipt('x', true);" >/tmp
   && fail "anon استطاع استدعاء دالة إدارية!" || true
 grep -q "permission denied" /tmp/gatta-rls-check.log || fail "الرفض لم يكن بسبب صلاحية كما هو متوقّع"
 
+# دوال الترحيل 9 الإدارية: Supabase يمنح EXECUTE لـanon افتراضيًا على أي دالة
+# جديدة، فالسحب الصريح في الترحيل هو ما يُفحص هنا.
+for CALL in "admin_set_organizer_paid('x', true)" "admin_rotate_manage_token('x', repeat('a',64), null)"; do
+  psql -d "$DB" -c "set role anon; select $CALL;" >/tmp/gatta-rls-check.log 2>&1 \
+    && fail "anon استطاع استدعاء $CALL!" || true
+  grep -q "permission denied" /tmp/gatta-rls-check.log || fail "رفض $CALL لم يكن بسبب صلاحية كما هو متوقّع"
+  psql -d "$DB" -c "set role service_role; select $CALL;" >/tmp/gatta-rls-check.log 2>&1 || true
+  if grep -q "permission denied for function" /tmp/gatta-rls-check.log; then
+    fail "service_role مرفوض من $CALL"
+  fi
+done
+
 SPLIT_ID=$(psql -d "$DB" -t -A -c "
   select split_id from create_split(gen_random_uuid(), 'اختبار', 'tok-rls-'||gen_random_uuid(),
     'فحص RLS', 5000, 2, now() + interval '1 day', false);")

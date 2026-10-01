@@ -10,25 +10,24 @@ import { validateManageSession, resumeManageSessionFromCookie } from "@/app/lib/
  *    فتح رابط الإدارة الأصلي، طالما الكوكي لم تنتهِ صلاحيتها.
  */
 export async function GET(req: NextRequest) {
-  let splitId: string
   let csrfToken: string | null = null
 
-  const full = await validateManageSession(req)
-  if (full) {
-    splitId = full.splitId
-  } else {
-    const resumed = await resumeManageSessionFromCookie(req)
-    if (!resumed) {
+  let session = await validateManageSession(req)
+  if (!session) {
+    session = await resumeManageSessionFromCookie(req)
+    if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 })
     }
-    splitId = resumed.splitId
-    csrfToken = resumed.csrfToken
+    csrfToken = session.csrfToken
   }
 
-  const { data, error } = await getSupabaseAdmin().rpc("get_manage_view", { p_split_id: splitId })
-  if (error || !data || data.length === 0) {
+  const { data, error } = await getSupabaseAdmin().rpc("get_manage_view", { p_split_id: session.splitId })
+  if (error) {
+    return NextResponse.json({ error: "server_error" }, { status: 500 })
+  }
+  if (!data || data.length === 0) {
     return NextResponse.json({ error: "not_found" }, { status: 404 })
   }
 
-  return NextResponse.json({ data: data[0], csrfToken })
+  return NextResponse.json({ data: data[0], csrfToken, expiresAt: session.expiresAt })
 }

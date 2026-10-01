@@ -4,11 +4,18 @@ import { useParams } from "next/navigation"
 import { useEffect, useState, useCallback, useRef } from "react"
 import { useToast } from "@/app/components/Toast"
 import { Footer } from "@/app/components/Footer"
-import type { SplitV2 } from "@/app/lib/types"
-import { halalasToRiyalText } from "@/app/lib/types"
+import type { MemberV2, SplitV2 } from "@/app/lib/types"
+import { halalasToRiyalText, perPersonHalalas } from "@/app/lib/types"
 import { usePolling } from "@/app/lib/usePolling"
+import { errorMessageAr } from "@/app/lib/errorMessages"
+import { isOrganizerDevice, markOrganizerDevice } from "@/app/lib/clientSecrets"
+import { MAX_PEOPLE, MAX_NAME_LENGTH, MAX_BANK_NAME_LENGTH } from "@/app/lib/validation"
 
 const CSRF_HEADER = "x-csrf-token"
+
+type Phase = "loading" | "ok" | "locked" | "error"
+// no_session: لا جلسة ولا رابط · invalid_link: رابط/توكن مرفوض · expired: جلسة كانت فعّالة وانتهت
+type LockReason = "no_session" | "invalid_link" | "expired"
 
 function buildShareText(data: SplitV2, shareUrl: string) {
   return [
@@ -16,7 +23,7 @@ function buildShareText(data: SplitV2, shareUrl: string) {
     `المناسبة: ${data.title}`,
     `المنظّم: ${data.organizer_name}`,
     `المبلغ الإجمالي: ${halalasToRiyalText(data.total_halalas)} ريال`,
-    `حصة الشخص: ${halalasToRiyalText(data.total_halalas / data.people)} ريال`,
+    `حصة الشخص: ${halalasToRiyalText(perPersonHalalas(data))} ريال`,
     `موعد اللقاء: ${new Date(data.event_at).toLocaleString("ar-SA")}`,
     ...(data.iban ? [``, `رقم الآيبان: ${data.iban}`] : []),
     ``, `انضمّي/انضمّ من الرابط، وبعد التحويل اضغطي/اضغط "حوّلت حصتي"`, shareUrl,
@@ -30,6 +37,10 @@ function formatArabicDate(isoString: string) {
   })
 }
 
+function formatArabicTime(isoString: string) {
+  return new Date(isoString).toLocaleTimeString("ar-SA", { hour: "numeric", minute: "2-digit" })
+}
+
 export default function ManagePage() {
   const params = useParams()
   const splitId = params.splitId as string
@@ -37,8 +48,18 @@ export default function ManagePage() {
 
   const [data, setData] = useState<SplitV2 | null>(null)
   const [csrfToken, setCsrfToken] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [unauthorized, setUnauthorized] = useState(false)
+  const [phase, setPhase] = useState<Phase>("loading")
+  const [lockReason, setLockReason] = useState<LockReason>("no_session")
+  const [expiresAt, setExpiresAt] = useState<string | null>(null)
+
+  // رابط الإدارة الكامل يبقى في ذاكرة الصفحة فقط (لا شريط العنوان، لا
+  // localStorage): متاح للنسخ في الزيارة التي وصل فيها التوكن أو بعد إصدار
+  // رابط جديد، ويزول بإعادة التحميل.
+  const [manageLink, setManageLink] = useState<string | null>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const [showLinkField, setShowLinkField] = useState(false)
+  const [confirmRotate, setConfirmRotate] = useState(false)
+  const [rotating, setRotating] = useState(false)
 
   const [bankEdits, setBankEdits] = useState({ name: "", iban: "" })
   const [savingBank, setSavingBank] = useState(false)
@@ -53,31 +74,27 @@ export default function ManagePage() {
 
   // لا نستبدل ما تكتبه المنظّمة في حقلي البنك أثناء تحديث بصمت في الخلفية
   const bankEditsDirty = useRef(false)
+  const started = useRef(false)
 
-  const manageFetch = useCallback(
-    async (path: string, body: unknown) => {
-      if (!csrfToken) throw new Error("no_session")
-      const res = await fetch(`/api/manage/${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", [CSRF_HEADER]: csrfToken },
-        body: JSON.stringify(body),
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json?.error ?? "server_error")
-      return json
-    },
-    [csrfToken]
-  )
+  // الجلسة لم تعد صالحة: نُخرج المنظّم من اللوحة إلى شاشة الاسترجاع ونمسح كل
+  // ما في الذاكرة — وبذلك يتوقف التحديث الدوري عن إرسال أي طلب.
+  const lock = useCallback((reason: LockReason) => {
+    setCsrfToken(null)
+    setManageLink(null)
+    setStale(false)
+    setLockReason(reason)
+    setPhase("locked")
+  }, [])
 
-  const loadView = useCallback(async (withCsrf?: string) => {
+  const loadView = useCallback(async (withCsrf?: string, onUnauthorized: LockReason = "expired") => {
     const res = await fetch("/api/manage/view", {
       headers: withCsrf ? { [CSRF_HEADER]: withCsrf } : {},
     })
     if (res.status === 401) {
-      setUnauthorized(true)
-      setLoading(false)
+      lock(onUnauthorized)
       return
     }
+    if (!res.ok) throw new Error("view_failed")
     const json = await res.json()
     setData(json.data)
     if (!bankEditsDirty.current) {
@@ -85,21 +102,88 @@ export default function ManagePage() {
     }
     if (json.csrfToken) setCsrfToken(json.csrfToken)
     else if (withCsrf) setCsrfToken(withCsrf)
-    setLoading(false)
-  }, [])
+    setExpiresAt(json.expiresAt ?? null)
+    markOrganizerDevice(splitId)
+    setPhase("ok")
+  }, [lock, splitId])
 
-  // تحديث دوري بصمت — فقط بعد نجاح تأسيس الجلسة، بلا مؤشر تحميل كامل وبلا
-  // إخراج المنظّمة من اللوحة عند عطل عابر (تُبقي آخر بيانات ناجحة + تنبيه خفيف).
+  const manageFetch = useCallback(
+    async (path: string, body: unknown) => {
+      if (!csrfToken) throw new Error("unauthorized")
+      const res = await fetch(`/api/manage/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", [CSRF_HEADER]: csrfToken },
+        body: JSON.stringify(body),
+      })
+      if (res.status === 401) {
+        lock("expired")
+        throw new Error("unauthorized")
+      }
+      const json = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(json?.error ?? "server_error")
+      return json
+    },
+    [csrfToken, lock]
+  )
+
+  // فشل إجراء: رسالة عربية واضحة. انتهاء الجلسة لا يحتاج رسالة — الشاشة نفسها تتبدّل.
+  const fail = useCallback((e: unknown, fallback: string) => {
+    const raw = e instanceof Error ? e.message : ""
+    if (raw === "unauthorized") return
+    showToast(errorMessageAr(raw, fallback), "error")
+  }, [showToast])
+
+  // تبادل توكن الإدارة بجلسة httpOnly ثم تحميل اللوحة
+  const establish = useCallback(async (token: string) => {
+    setPhase("loading")
+    try {
+      const res = await fetch("/api/manage/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ splitId, manageToken: token }),
+      })
+      if (res.status === 400 || res.status === 401) {
+        lock("invalid_link")
+        return
+      }
+      if (!res.ok) throw new Error("session_failed")
+      const json = await res.json()
+      setManageLink(`${window.location.origin}/m/${splitId}#${token}`)
+      setLinkCopied(false)
+      setShowLinkField(false)
+      await loadView(json.csrfToken)
+    } catch {
+      setPhase("error")
+    }
+  }, [splitId, loadView, lock])
+
+  // بلا توكن: استئناف من الكوكي إن وُجدت. إن سبق لهذا المتصفح فتح اللوحة
+  // فالجلسة "انتهت"؛ وإلا فهو زائر بلا رابط إدارة أصلًا.
+  const resume = useCallback(async () => {
+    setPhase("loading")
+    try {
+      await loadView(undefined, isOrganizerDevice(splitId) ? "expired" : "no_session")
+    } catch {
+      setPhase("error")
+    }
+  }, [splitId, loadView])
+
+  // تحديث دوري بصمت — فقط واللوحة مفتوحة فعلًا. عطل عابر: تُبقي آخر بيانات
+  // ناجحة + تنبيه خفيف. انتهاء الجلسة (401): شاشة الاسترجاع، بلا إعادة محاولة.
   const refreshView = useCallback(async () => {
-    if (loading || unauthorized || !csrfToken) return
+    if (phase !== "ok" || !csrfToken) return
     const res = await fetch("/api/manage/view", { headers: { [CSRF_HEADER]: csrfToken } })
+    if (res.status === 401) {
+      lock("expired")
+      return
+    }
     if (!res.ok) throw new Error("refresh_failed")
     const json = await res.json()
     setData(json.data)
     if (!bankEditsDirty.current) {
       setBankEdits({ name: json.data.bank_name ?? "", iban: json.data.iban ?? "" })
     }
-  }, [loading, unauthorized, csrfToken])
+  }, [phase, csrfToken, lock])
 
   usePolling(refreshView, {
     intervalMs: 10000,
@@ -108,40 +192,30 @@ export default function ManagePage() {
   })
 
   useEffect(() => {
-    // سكربت مبكر: يُنفَّذ عند التحميل قبل أي مكوّن React — يلتقط توكن الإدارة
-    // من fragment الرابط ويمسحه فورًا من شريط العنوان، حتى لا يبقى في تاريخ
-    // المتصفح أو يُقرَأ عبر location.href من أي سكربت لاحق (كالتحليلات).
-    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : ""
-    if (hash) {
-      window.history.replaceState(null, "", window.location.pathname)
+    // يلتقط توكن الإدارة من fragment الرابط ويمسحه فورًا من شريط العنوان، حتى
+    // لا يبقى في تاريخ المتصفح أو يُقرَأ عبر location.href من أي سكربت لاحق
+    // (كالتحليلات). يعمل عند التحميل، وأيضًا عند لصق رابط الإدارة في نفس
+    // التبويب (تغيّر الـfragment وحده لا يعيد تحميل الصفحة).
+    const takeToken = () => {
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : ""
+      if (hash) window.history.replaceState(null, "", window.location.pathname)
+      return hash
+    }
+    const onHashChange = () => {
+      const token = takeToken()
+      if (token) establish(token)
     }
 
-    const run = async () => {
-      if (hash) {
-        try {
-          const res = await fetch("/api/manage/session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ splitId, manageToken: hash }),
-          })
-          if (!res.ok) {
-            setUnauthorized(true)
-            setLoading(false)
-            return
-          }
-          const json = await res.json()
-          await loadView(json.csrfToken)
-        } catch {
-          setUnauthorized(true)
-          setLoading(false)
-        }
-      } else {
-        await loadView()
-      }
+    if (!started.current) {
+      started.current = true
+      const token = takeToken()
+      if (token) establish(token)
+      else resume()
     }
-    run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [splitId])
+
+    window.addEventListener("hashchange", onHashChange)
+    return () => window.removeEventListener("hashchange", onHashChange)
+  }, [establish, resume])
 
   useEffect(() => {
     if (!openMenuId) return
@@ -149,6 +223,33 @@ export default function ManagePage() {
     document.addEventListener("click", closeMenu)
     return () => document.removeEventListener("click", closeMenu)
   }, [openMenuId])
+
+  const copyManageLink = async () => {
+    if (!manageLink) return
+    try {
+      await navigator.clipboard.writeText(manageLink)
+      setLinkCopied(true)
+      showToast("تم نسخ رابط الإدارة — احفظه في مكان خاص بك", "success")
+    } catch {
+      // النسخ التلقائي غير متاح على هذا المتصفح: نعرض الرابط للنسخ اليدوي
+      setShowLinkField(true)
+    }
+  }
+
+  const rotateLink = async () => {
+    setRotating(true)
+    try {
+      const json = await manageFetch("rotate-link", {})
+      setManageLink(`${window.location.origin}/m/${splitId}#${json.manageToken}`)
+      setLinkCopied(false)
+      setShowLinkField(false)
+      setConfirmRotate(false)
+      showToast("صدر رابط إدارة جديد — انسخه واحفظه الآن", "success")
+    } catch (e) {
+      fail(e, "تعذّر إصدار رابط جديد — أعيدي/أعد المحاولة")
+    }
+    setRotating(false)
+  }
 
   const saveBankDetails = async () => {
     setSavingBank(true)
@@ -158,7 +259,7 @@ export default function ManagePage() {
       bankEditsDirty.current = false // الآن تطابق الخادم؛ يمكن للتحديث الدوري مزامنتها بأمان
       await loadView(csrfToken ?? undefined)
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "تعذّر الحفظ", "error")
+      fail(e, "تعذّر الحفظ — تحقّقي/تحقّق من اتصالك")
     }
     setSavingBank(false)
   }
@@ -169,7 +270,19 @@ export default function ManagePage() {
       await manageFetch("confirm-receipt", { memberId, confirm })
       await loadView(csrfToken ?? undefined)
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "تعذّر التحديث", "error")
+      fail(e, "تعذّر التحديث — تحقّقي/تحقّق من اتصالك")
+    }
+    setBusyMemberId(null)
+  }
+
+  // حصة المنظّم نفسه: لا تحويل يُنتظر ولا إبلاغ، يسجّلها المنظّم مباشرة
+  const setOrganizerPaid = async (memberId: string, paid: boolean) => {
+    setBusyMemberId(memberId)
+    try {
+      await manageFetch("organizer-paid", { paid })
+      await loadView(csrfToken ?? undefined)
+    } catch (e) {
+      fail(e, "تعذّر التحديث — تحقّقي/تحقّق من اتصالك")
     }
     setBusyMemberId(null)
   }
@@ -183,7 +296,7 @@ export default function ManagePage() {
       showToast("تم تسجيل الاسم", "success")
       await loadView(csrfToken ?? undefined)
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "تعذّر الإضافة", "error")
+      fail(e, "تعذّرت الإضافة — تحقّقي/تحقّق من اتصالك")
     }
     setAddingMember(false)
   }
@@ -194,21 +307,22 @@ export default function ManagePage() {
       await manageFetch("remove-member", { memberId })
       await loadView(csrfToken ?? undefined)
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "تعذّرت الإزالة", "error")
+      fail(e, "تعذّرت الإزالة — تحقّقي/تحقّق من اتصالك")
     }
     setBusyMemberId(null)
   }
 
   const increaseCapacity = async () => {
-    const delta = parseInt(increaseDelta, 10)
-    if (!Number.isInteger(delta) || delta < 1) return
+    const delta = Number(increaseDelta)
+    if (!Number.isInteger(delta) || delta < 1) { showToast(errorMessageAr("invalid_delta", ""), "error"); return }
+    if (data && data.people + delta > MAX_PEOPLE) { showToast(errorMessageAr("max_capacity_exceeded", ""), "error"); return }
     setIncreasing(true)
     try {
       await manageFetch("increase-capacity", { delta })
       showToast("تم تحديث العدد", "success")
       await loadView(csrfToken ?? undefined)
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "تعذّرت الزيادة", "error")
+      fail(e, "تعذّرت الزيادة — تحقّقي/تحقّق من اتصالك")
     }
     setIncreasing(false)
   }
@@ -220,12 +334,12 @@ export default function ManagePage() {
       const json = await manageFetch("issue-claim-code", { memberId })
       setIssuedCodes((prev) => ({ ...prev, [memberId]: json.code }))
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "تعذّر إصدار الرمز", "error")
+      fail(e, "تعذّر إصدار الرمز — تحقّقي/تحقّق من اتصالك")
     }
     setBusyMemberId(null)
   }
 
-  if (loading) {
+  if (phase === "loading") {
     return (
       <main className="min-h-dvh flex items-center justify-center p-8">
         <span className="spinner spinner-light" style={{ width: 26, height: 26, borderTopColor: "var(--primary)", borderColor: "var(--border)" }} />
@@ -233,35 +347,94 @@ export default function ManagePage() {
     )
   }
 
-  if (unauthorized || !data) {
+  if (phase === "error") {
     return (
       <main className="min-h-dvh flex items-center justify-center p-8 text-center">
         <div className="space-y-3 max-w-xs">
-          <p className="font-semibold">لا يمكن فتح الإدارة</p>
-          <p className="text-sm" style={{ color: "var(--text-2)" }}>
-            افتحي رابط الإدارة الذي حفظتِه عند إنشاء القطّة. إن فقدتِه، لا يوجد حاليًا مسار
-            لاسترجاعه ذاتيًا.
-          </p>
+          <p className="font-semibold">تعذّر الاتصال</p>
+          <p className="text-sm" style={{ color: "var(--text-2)" }}>تحقّقي/تحقّق من الإنترنت وأعيدي/أعد المحاولة.</p>
+          <button className="btn btn-ghost" onClick={resume}
+            style={{ width: "auto", display: "inline-flex", padding: "0 24px" }}>
+            إعادة المحاولة
+          </button>
         </div>
       </main>
     )
   }
 
+  if (phase === "locked" || !data) {
+    return <ManageLocked reason={lockReason} splitId={splitId} onToken={establish} />
+  }
+
   const locked = !!data.reporting_started_at
+  const smallBtn = { height: 36, width: "auto", padding: "0 10px", fontSize: 12, borderRadius: 10 } as const
 
   return (
     <main className="min-h-dvh px-4 py-8 sm:py-12">
       <div className="mx-auto max-w-md space-y-4">
-        <div
-          className="rounded-2xl p-3 text-sm text-center"
-          style={{ background: "var(--toast-error-bg)", color: "var(--toast-error-text)", border: "1px solid var(--toast-error-border)" }}
-        >
-          🔒 هذا رابط إدارة سرّي — من يملكه يستطيع إدارة هذه القطّة بالكامل. يُشارَك فقط رابط
-          المشاركة العادي أدناه، لا هذا الرابط.
-        </div>
+        {/* رابط الإدارة: حفظه (أول زيارة / بعد الإصدار) أو استرجاعه بإصدار رابط جديد */}
+        {manageLink ? (
+          <div
+            className="rounded-2xl p-4 space-y-3"
+            style={linkCopied
+              ? { background: "var(--success-soft-bg)", border: "1px solid var(--success-soft-border)" }
+              : { background: "var(--toast-error-bg)", border: "1px solid var(--toast-error-border)" }}
+          >
+            <h2 className="font-semibold" style={{ fontSize: 15, color: linkCopied ? "var(--text-1)" : "var(--toast-error-text)" }}>
+              {linkCopied ? "✅ نُسخ رابط الإدارة — احفظه الآن في مكان خاص بك" : "🔑 احفظ رابط الإدارة قبل أي شيء"}
+            </h2>
+            <p className="text-sm" style={{ color: linkCopied ? "var(--text-2)" : "var(--toast-error-text)", lineHeight: 1.7 }}>
+              رابط الإدارة السرّي هو الطريقة الوحيدة لفتح هذه اللوحة من جهاز آخر، أو من هذا المتصفح بعد
+              انتهاء الجلسة (8 ساعات). الصقه في الملاحظات أو أرسله لنفسك — ولا تشاركه مع أحد: من يملكه
+              يدير القطّة بالكامل.
+            </p>
+            <button className="btn btn-white" onClick={copyManageLink} style={{ height: 48, fontSize: 14 }}>
+              {linkCopied ? "نسخ رابط الإدارة مرة أخرى" : "نسخ رابط الإدارة"}
+            </button>
+            {showLinkField && (
+              <div>
+                <label className="label">تعذّر النسخ التلقائي — انسخ الرابط يدويًا:</label>
+                <input className="field" readOnly value={manageLink} onFocus={(e) => e.target.select()}
+                  style={{ height: 44, fontSize: 12, direction: "ltr", textAlign: "left" }} />
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="card space-y-3">
+            <h2 className="section-title" style={{ marginBottom: 0 }}>رابط الإدارة</h2>
+            <p className="text-sm" style={{ color: "var(--text-2)", lineHeight: 1.7 }}>
+              لحمايتك لا يُعرض رابط الإدارة بعد فتحه.
+              {expiresAt && ` جلسة هذا المتصفح مستمرة حتى ${formatArabicTime(expiresAt)}، وبعدها تحتاج الرابط لفتح اللوحة.`}
+              {" "}إن كان الرابط محفوظًا لديك فلا حاجة لأي إجراء.
+            </p>
+            {confirmRotate ? (
+              <>
+                <p className="text-sm" style={{ color: "var(--toast-error-text)", lineHeight: 1.7 }}>
+                  سيتوقف الرابط القديم عن العمل فورًا، وتُغلق أي لوحة إدارة مفتوحة على أجهزة أخرى.
+                </p>
+                <div className="flex gap-2">
+                  <button className="btn btn-white" onClick={rotateLink} disabled={rotating} style={{ height: 48, fontSize: 14 }}>
+                    {rotating ? <span className="spinner" style={{ width: 16, height: 16 }} /> : "تأكيد إصدار رابط جديد"}
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setConfirmRotate(false)} disabled={rotating}
+                    style={{ height: 48, fontSize: 14, width: "auto", flexShrink: 0 }}>
+                    إلغاء
+                  </button>
+                </div>
+              </>
+            ) : (
+              <button className="btn btn-ghost" onClick={() => setConfirmRotate(true)} style={{ height: 48, fontSize: 14 }}>
+                لم أحفظ الرابط — إصدار رابط إدارة جديد
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="card space-y-2">
           <h2 className="section-title" style={{ marginBottom: 0 }}>رابط المشاركة</h2>
+          <p className="text-xs" style={{ color: "var(--text-3)" }}>
+            هذا هو الرابط الذي يُرسل للمشاركين — لا ترسل لهم رابط الإدارة.
+          </p>
           <p className="text-sm break-all" style={{ color: "var(--text-2)" }}>
             {typeof window !== "undefined" ? `${window.location.origin}/s/${splitId}` : `/s/${splitId}`}
           </p>
@@ -330,13 +503,13 @@ export default function ManagePage() {
           <h2 className="section-title" style={{ marginBottom: 0 }}>بيانات التحويل</h2>
           <div>
             <label className="label">اسم البنك</label>
-            <input className="field" value={bankEdits.name}
+            <input className="field" value={bankEdits.name} maxLength={MAX_BANK_NAME_LENGTH}
               onChange={(e) => { bankEditsDirty.current = true; setBankEdits((p) => ({ ...p, name: e.target.value })) }}
               placeholder="مثال: بنك الراجحي" />
           </div>
           <div>
             <label className="label">رقم الآيبان (IBAN)</label>
-            <input className="field" value={bankEdits.iban}
+            <input className="field" value={bankEdits.iban} maxLength={42}
               onChange={(e) => { bankEditsDirty.current = true; setBankEdits((p) => ({ ...p, iban: e.target.value })) }}
               placeholder="SA00 0000 0000 0000 0000 0000"
               style={{ direction: "ltr", textAlign: "left" }} />
@@ -357,7 +530,7 @@ export default function ManagePage() {
                     {m.name || "مقعد فارغ"} {m.is_organizer && "👑"}
                   </span>
                   <span className="text-xs" style={{ color: "var(--text-3)" }}>
-                    {halalasToRiyalText(m.amount_halalas)} ريال · {statusLabel(m.status)}
+                    {halalasToRiyalText(m.amount_halalas)} ريال · {statusLabel(m)}
                   </span>
                   {issuedCodes[m.id] && (
                     <span className="text-xs" style={{ color: "var(--primary)" }}>
@@ -368,20 +541,32 @@ export default function ManagePage() {
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 6, flexShrink: 0, position: "relative" }}>
-                  {m.status === "reported" && (
-                    <button className="btn-ghost" style={{ height: 36, width: "auto", padding: "0 10px", fontSize: 12, borderRadius: 10 }}
+                  {m.is_organizer && m.status !== "confirmed" && m.status !== "empty" && (
+                    <button className="btn-ghost" style={smallBtn}
+                      onClick={() => setOrganizerPaid(m.id, true)} disabled={busyMemberId === m.id}>
+                      دفعتُ حصتي
+                    </button>
+                  )}
+                  {m.is_organizer && m.status === "confirmed" && (
+                    <button className="btn-ghost" style={smallBtn}
+                      onClick={() => setOrganizerPaid(m.id, false)} disabled={busyMemberId === m.id}>
+                      تراجع
+                    </button>
+                  )}
+                  {!m.is_organizer && m.status === "reported" && (
+                    <button className="btn-ghost" style={smallBtn}
                       onClick={() => confirmReceipt(m.id, true)} disabled={busyMemberId === m.id}>
                       تأكيد وصول المبلغ
                     </button>
                   )}
-                  {m.status === "confirmed" && (
-                    <button className="btn-ghost" style={{ height: 36, width: "auto", padding: "0 10px", fontSize: 12, borderRadius: 10 }}
+                  {!m.is_organizer && m.status === "confirmed" && (
+                    <button className="btn-ghost" style={smallBtn}
                       onClick={() => confirmReceipt(m.id, false)} disabled={busyMemberId === m.id}>
                       تراجع
                     </button>
                   )}
-                  {m.status === "empty" && !locked && (
-                    <button className="btn-ghost" style={{ height: 36, width: "auto", padding: "0 10px", fontSize: 12, borderRadius: 10 }}
+                  {m.status === "empty" && !locked && data.people > 1 && (
+                    <button className="btn-ghost" style={smallBtn}
                       onClick={() => removeMember(m.id)} disabled={busyMemberId === m.id}>
                       إزالة
                     </button>
@@ -429,6 +614,7 @@ export default function ManagePage() {
           <div style={{ height: 1, background: "var(--border)", margin: "4px -22px 0" }} />
           <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
             <input className="field" value={newName} onChange={(e) => setNewName(e.target.value)}
+              maxLength={MAX_NAME_LENGTH}
               placeholder="تسجيل اسم شخص…" style={{ height: 44, fontSize: 14 }} />
             <button className="btn btn-white" onClick={addMember} disabled={addingMember || !newName.trim()}
               style={{ width: "auto", padding: "0 16px", height: 44, fontSize: 14 }}>
@@ -443,9 +629,13 @@ export default function ManagePage() {
               <p className="text-xs" style={{ color: "var(--text-3)" }}>
                 مقفلة — بدأ الإبلاغ عن التحويلات. أنشئي/أنشئ قطّة جديدة لتغيير العدد.
               </p>
+            ) : data.people >= MAX_PEOPLE ? (
+              <p className="text-xs" style={{ color: "var(--text-3)" }}>
+                وصلت القطّة للحد الأقصى ({MAX_PEOPLE} شخص).
+              </p>
             ) : (
               <div style={{ display: "flex", gap: 8 }}>
-                <input className="field" type="number" min={1} value={increaseDelta}
+                <input className="field" type="number" min={1} max={MAX_PEOPLE - data.people} value={increaseDelta}
                   onChange={(e) => setIncreaseDelta(e.target.value)}
                   style={{ height: 44, width: 72, textAlign: "center" }} />
                 <button className="btn btn-ghost" onClick={increaseCapacity} disabled={increasing}
@@ -462,13 +652,83 @@ export default function ManagePage() {
   )
 }
 
-function statusLabel(status: string) {
-  switch (status) {
+const LOCK_TEXT: Record<LockReason, { title: string; body: string }> = {
+  expired: {
+    title: "انتهت جلسة الإدارة",
+    body: "لحمايتك تنتهي جلسة الإدارة تلقائيًا بعد 8 ساعات. الصقي/الصق رابط الإدارة الذي حفظته لفتح اللوحة من جديد.",
+  },
+  no_session: {
+    title: "لوحة الإدارة تحتاج رابط الإدارة",
+    body: "هذه الصفحة خاصة بمنظّم القطّة. الصقي/الصق رابط الإدارة السرّي الذي حفظته عند إنشاء القطّة.",
+  },
+  invalid_link: {
+    title: "رابط الإدارة غير صحيح",
+    body: "قد يكون الرابط ناقصًا، أو صدر بعده رابط إدارة أحدث فتوقّف هذا عن العمل. الصقي/الصق أحدث رابط إدارة لديك.",
+  },
+}
+
+// شاشة الاسترجاع: لا لوحة ولا تحديث دوري — فقط حقل للصق رابط الإدارة المحفوظ.
+function ManageLocked({ reason, splitId, onToken }: {
+  reason: LockReason
+  splitId: string
+  onToken: (token: string) => void
+}) {
+  const [value, setValue] = useState("")
+  const [error, setError] = useState("")
+  const text = LOCK_TEXT[reason]
+
+  const submit = () => {
+    const raw = value.trim()
+    const token = raw.includes("#") ? raw.slice(raw.lastIndexOf("#") + 1) : raw
+    const linkedId = raw.match(/\/m\/([^#/?\s]+)/)?.[1]
+    if (!/^[0-9a-f]{64}$/i.test(token)) {
+      setError("هذا ليس رابط إدارة كاملًا — الصقي/الصق الرابط كما حفظته، بما فيه الجزء بعد علامة #")
+      return
+    }
+    setError("")
+    // رابط إدارة لقطّة أخرى: نفتح لوحتها هي
+    if (linkedId && linkedId !== splitId) {
+      window.location.href = `/m/${linkedId}#${token}`
+      return
+    }
+    onToken(token)
+  }
+
+  return (
+    <main className="min-h-dvh flex items-center justify-center px-4 py-8">
+      <div className="card space-y-3 w-full max-w-md">
+        <h1 className="font-semibold text-lg">{text.title}</h1>
+        <p className="text-sm" style={{ color: "var(--text-2)", lineHeight: 1.7 }}>{text.body}</p>
+        <div>
+          <label className="label">رابط الإدارة</label>
+          <input className="field" value={value} onChange={(e) => { setValue(e.target.value); setError("") }}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            autoComplete="off" autoCapitalize="off" spellCheck={false}
+            placeholder="الصق رابط الإدارة هنا" style={{ fontSize: 14 }} />
+          {error && <p className="text-xs mt-1.5" style={{ color: "var(--toast-error-text)" }}>{error}</p>}
+        </div>
+        <button className="btn btn-white" onClick={submit} disabled={!value.trim()}>فتح لوحة الإدارة</button>
+        <p className="text-xs" style={{ color: "var(--text-3)", lineHeight: 1.7 }}>
+          إن لم يكن الرابط محفوظًا لديك فلا يمكن استرجاعه من هنا. ما زال بإمكانك متابعة القطّة من صفحة
+          المشاركة.
+        </p>
+        <a href={`/s/${splitId}`} className="btn btn-ghost" style={{ height: 48, fontSize: 14 }}>فتح صفحة المشاركة</a>
+      </div>
+    </main>
+  )
+}
+
+function statusLabel(m: MemberV2) {
+  if (m.is_organizer) {
+    if (m.status === "confirmed") return "حصتك مدفوعة ✅"
+    if (m.status === "joined") return "حصتك — لم تُسجَّل كمدفوعة بعد"
+  }
+  switch (m.status) {
     case "empty": return "مقعد فارغ"
     case "joined": return "انضمّ — لم يُبلَّغ بعد"
     case "reported": return "أبلغ بالتحويل — بانتظار التأكيد"
     case "confirmed": return "تأكَّد الاستلام ✅"
     case "legacy_paid": return "سُجّل كمدفوع في الإصدار السابق"
-    default: return status
+    default: return m.status
   }
 }

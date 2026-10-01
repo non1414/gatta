@@ -27,3 +27,8 @@ export type SplitV2 = {
 export function halalasToRiyalText(halalas: number): string {
   return (halalas / 100).toFixed(2)
 }
+
+/** حصة الشخص للعرض — صفر (لا Infinity/NaN) إن لم يكن هناك أي مقعد. */
+export function perPersonHalalas(split: Pick<SplitV2, "total_halalas" | "people">): number {
+  return split.people > 0 ? split.total_halalas / split.people : 0
+}

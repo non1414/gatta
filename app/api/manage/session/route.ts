@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/app/lib/supabaseAdmin"
 import { createManageSession, manageCookieOptions, MANAGE_COOKIE } from "@/app/lib/manageSession"
+import { readJsonObject, badRequest } from "@/app/lib/manageRouteHelpers"
 
 /**
  * تبادل توكن الإدارة الخام (يصل مرة واحدة من fragment الرابط على العميل)
@@ -8,16 +9,14 @@ import { createManageSession, manageCookieOptions, MANAGE_COOKIE } from "@/app/l
  * نُعيده في أي استجابة لاحقة — من هذه اللحظة فصاعدًا الكوكي هو بديله.
  */
 export async function POST(req: NextRequest) {
-  let body: { splitId?: string; manageToken?: string }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 })
-  }
-
-  const { splitId, manageToken } = body
-  if (!splitId || !manageToken) {
-    return NextResponse.json({ error: "bad_request" }, { status: 400 })
+  const body = await readJsonObject(req)
+  const splitId = body?.splitId
+  const manageToken = body?.manageToken
+  if (
+    typeof splitId !== "string" || typeof manageToken !== "string" ||
+    !splitId || !manageToken || splitId.length > 100 || manageToken.length > 200
+  ) {
+    return badRequest()
   }
 
   const { data: isValid, error } = await getSupabaseAdmin().rpc("admin_verify_manage_token", {
@@ -34,9 +33,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_token" }, { status: 401 })
   }
 
-  const { sessionId, csrfToken, ttlSeconds } = await createManageSession(splitId)
+  let session
+  try {
+    session = await createManageSession(splitId)
+  } catch {
+    return NextResponse.json({ error: "server_error" }, { status: 500 })
+  }
+  const { sessionId, csrfToken, expiresAt, ttlSeconds } = session
 
-  const res = NextResponse.json({ ok: true, csrfToken, splitId, ttlSeconds })
+  const res = NextResponse.json({ ok: true, csrfToken, splitId, expiresAt, ttlSeconds })
   res.cookies.set(MANAGE_COOKIE, sessionId, manageCookieOptions())
   return res
 }

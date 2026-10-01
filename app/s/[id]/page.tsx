@@ -9,11 +9,13 @@ import { MemberList } from "@/app/components/MemberList"
 import { Footer } from "@/app/components/Footer"
 import { PageHeader } from "@/app/components/PageHeader"
 import type { SplitV2 } from "@/app/lib/types"
-import { halalasToRiyalText } from "@/app/lib/types"
+import { halalasToRiyalText, perPersonHalalas } from "@/app/lib/types"
 import {
-  getOrCreateParticipantToken, getMemberId, setMemberId, newClientRequestId,
+  getOrCreateParticipantToken, getMemberId, setMemberId, newClientRequestId, isOrganizerDevice,
 } from "@/app/lib/clientSecrets"
 import { usePolling } from "@/app/lib/usePolling"
+import { errorCode, errorMessageAr } from "@/app/lib/errorMessages"
+import { MAX_NAME_LENGTH } from "@/app/lib/validation"
 
 function formatRemaining(ms: number) {
   if (ms <= 0) return "وصل وقت اللقاء 🎉"
@@ -56,6 +58,9 @@ export default function SplitPage() {
   const [stale, setStale] = useState(false)
 
   const myMemberId = getMemberId(id)
+  // هذا المتصفح سبق أن فتح لوحة إدارة هذه القطّة → نعرض له رابط اللوحة بدل
+  // نموذج الانضمام، حتى لا يأخذ المنظّم مقعدًا ثانيًا بالخطأ.
+  const organizerDevice = isOrganizerDevice(id)
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -109,7 +114,12 @@ export default function SplitPage() {
     () => (data?.members ?? []).filter((m) => m.status !== "empty").length,
     [data]
   )
-  const isFull = useMemo(() => !!data && data.members.every((m) => m.status !== "empty"), [data])
+  const isFull = useMemo(
+    () => !!data && data.members.length > 0 && data.members.every((m) => m.status !== "empty"),
+    [data]
+  )
+  const hasEmptySeat = useMemo(() => !!data && data.members.some((m) => m.status === "empty"), [data])
+  const organizerSeat = useMemo(() => data?.members.find((m) => m.is_organizer) ?? null, [data])
 
   const remainingText = useMemo(() => {
     if (!data) return ""
@@ -120,6 +130,7 @@ export default function SplitPage() {
     if (!data) return
     const name = joinName.trim()
     if (!name) { showToast("اكتبي/اكتب اسمك أولاً", "error"); return }
+    if (name.length > MAX_NAME_LENGTH) { showToast(errorMessageAr("name_too_long", ""), "error"); return }
 
     setJoining(true)
     const token = getOrCreateParticipantToken(id)
@@ -130,7 +141,9 @@ export default function SplitPage() {
       p_participant_token: token,
     })
     if (error || !rows || rows.length === 0) {
-      showToast(error?.message ?? "تعذّر الانضمام — قد تكون القطّة اكتملت", "error")
+      showToast(errorMessageAr(error?.message, "تعذّر الانضمام — تحقّقي/تحقّق من اتصالك وأعيدي/أعد المحاولة"), "error")
+      // اكتملت أثناء المحاولة: نحدّث العرض ليظهر تنبيه الاكتمال بدل النموذج
+      if (errorCode(error?.message) === "split_full") await load()
       setJoining(false)
       return
     }
@@ -145,7 +158,12 @@ export default function SplitPage() {
     setReporting(true)
     const token = getOrCreateParticipantToken(id)
     const { error } = await supabase.rpc("report_transfer", { p_member_id: myMember.id, p_participant_token: token })
-    if (error) { showToast("تعذّر الإبلاغ — تحقّقي من اتصالك", "error"); setReporting(false); return }
+    if (error) {
+      showToast(errorMessageAr(error.message, "تعذّر الإبلاغ — تحقّقي/تحقّق من اتصالك"), "error")
+      await load()
+      setReporting(false)
+      return
+    }
     showToast("تم الإبلاغ عن التحويل، بانتظار تأكيد المنظّم", "success")
     await load()
     setReporting(false)
@@ -156,7 +174,12 @@ export default function SplitPage() {
     setReporting(true)
     const token = getOrCreateParticipantToken(id)
     const { error } = await supabase.rpc("retract_report", { p_member_id: myMember.id, p_participant_token: token })
-    if (error) { showToast("تعذّر التراجع", "error"); setReporting(false); return }
+    if (error) {
+      showToast(errorMessageAr(error.message, "تعذّر التراجع — تحقّقي/تحقّق من اتصالك"), "error")
+      await load()
+      setReporting(false)
+      return
+    }
     showToast("تم التراجع عن الإبلاغ", "success")
     await load()
     setReporting(false)
@@ -174,9 +197,14 @@ export default function SplitPage() {
     })
     const result = rows?.[0]
     if (error || !result?.success) {
-      showToast(result?.error_code === "too_many_attempts"
-        ? "محاولات كثيرة — اطلبي من المنظّم رمزًا جديدًا"
-        : "الرمز غير صحيح أو منتهٍ", "error")
+      showToast(
+        error
+          ? errorMessageAr(error.message, "تعذّر التحقق من الرمز — تحقّقي/تحقّق من اتصالك")
+          : result?.error_code === "too_many_attempts"
+            ? "محاولات كثيرة — اطلبي/اطلب من المنظّم رمزًا جديدًا"
+            : "الرمز غير صحيح أو منتهٍ",
+        "error"
+      )
       setClaiming(false)
       return
     }
@@ -196,7 +224,7 @@ export default function SplitPage() {
       `المناسبة: ${data.title}`,
       `المنظّم: ${data.organizer_name}`,
       `المبلغ الإجمالي: ${halalasToRiyalText(data.total_halalas)} ريال`,
-      `حصة الشخص: ${halalasToRiyalText(data.total_halalas / data.people)} ريال`,
+      `حصة الشخص: ${halalasToRiyalText(perPersonHalalas(data))} ريال`,
       `موعد اللقاء: ${formatArabicDate(data.event_at)}`,
       ...(data.iban ? [``, `رقم الآيبان: ${data.iban}`] : []),
       ``, `انضمّي/انضمّ من الرابط، وبعد التحويل اضغطي/اضغط "حوّلت حصتي"`, shareUrl,
@@ -250,7 +278,7 @@ export default function SplitPage() {
     )
   }
 
-  const shareHalalas = data.total_halalas / data.people
+  const shareHalalas = perPersonHalalas(data)
 
   return (
     <main className="min-h-dvh px-4 py-8 sm:py-12">
@@ -361,17 +389,37 @@ export default function SplitPage() {
                   <p className="text-sm" style={{ color: "var(--success)" }}>✅ أكّد المنظّم استلام حصتك.</p>
                 )}
               </>
+            ) : organizerDevice ? (
+              <>
+                <h2 className="section-title" style={{ marginBottom: 0 }}>أنت منظّم هذه القطّة</h2>
+                <p className="text-sm" style={{ color: "var(--text-2)" }}>
+                  {organizerSeat
+                    ? organizerSeat.status === "confirmed"
+                      ? `مقعدك «${organizerSeat.name}» محسوب ضمن المشاركين، وحصتك مسجّلة كمدفوعة ✅`
+                      : `مقعدك «${organizerSeat.name}» محسوب ضمن المشاركين — لا حاجة للانضمام من هنا. سجّلي/سجّل دفع حصتك من لوحة الإدارة.`
+                    : "لست ضمن المشاركين في الدفع، فلا حاجة للانضمام من هنا. تابعي/تابع التحويلات وأكّديها/أكّدها من لوحة الإدارة."}
+                </p>
+                <a href={`/m/${id}`} className="btn btn-white">فتح لوحة الإدارة</a>
+              </>
             ) : (
               <>
-                <h2 className="section-title" style={{ marginBottom: 0 }}>الانضمام للقطّة</h2>
-                <div className="flex gap-2">
-                  <input className="field" value={joinName} onChange={(e) => setJoinName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && joinSplit()} placeholder="اسمك هنا" />
-                  <button className="btn btn-white" onClick={joinSplit} disabled={!joinName.trim() || joining}
-                    style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}>
-                    {joining ? <span className="spinner" /> : "انضمام"}
-                  </button>
-                </div>
+                <h2 className="section-title" style={{ marginBottom: 0 }}>
+                  {hasEmptySeat ? "الانضمام للقطّة" : "اكتملت القطّة"}
+                </h2>
+                {!hasEmptySeat ? (
+                  <p className="text-sm" style={{ color: "var(--text-2)" }}>
+                    لا توجد مقاعد متاحة — انضمّ كل المشاركين. إن رغبتِ/رغبتَ بالمشاركة تواصلي/تواصل مع المنظّم.
+                  </p>
+                ) : (
+                  <div className="flex gap-2">
+                    <input className="field" value={joinName} onChange={(e) => setJoinName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && joinSplit()} placeholder="اسمك هنا" maxLength={MAX_NAME_LENGTH} />
+                    <button className="btn btn-white" onClick={joinSplit} disabled={!joinName.trim() || joining}
+                      style={{ width: "auto", padding: "0 20px", flexShrink: 0 }}>
+                      {joining ? <span className="spinner" /> : "انضمام"}
+                    </button>
+                  </div>
+                )}
                 <button
                   onClick={() => setShowClaim((v) => !v)}
                   className="text-xs"

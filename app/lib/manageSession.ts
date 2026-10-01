@@ -4,6 +4,9 @@ import { getSupabaseAdmin } from "./supabaseAdmin"
 export const MANAGE_COOKIE = "gatta_manage_session"
 export const CSRF_HEADER = "x-csrf-token"
 const SESSION_TTL_SECONDS = 8 * 60 * 60 // 8 ساعات
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export type ManageSession = { splitId: string; sessionId: string; csrfToken: string; expiresAt: string }
 
 export function manageCookieOptions() {
   return {
@@ -26,7 +29,29 @@ export async function createManageSession(splitId: string) {
     .single()
 
   if (error || !data) throw new Error("session_create_failed")
-  return { sessionId: data.id as string, csrfToken, ttlSeconds: SESSION_TTL_SECONDS }
+  return { sessionId: data.id as string, csrfToken, expiresAt, ttlSeconds: SESSION_TTL_SECONDS }
+}
+
+async function loadSessionFromCookie(req: NextRequest): Promise<ManageSession | null> {
+  const sessionId = req.cookies.get(MANAGE_COOKIE)?.value
+  if (!sessionId || !UUID_RE.test(sessionId)) return null
+
+  const { data, error } = await getSupabaseAdmin()
+    .from("manage_sessions")
+    .select("split_id, csrf_token, expires_at, revoked_at")
+    .eq("id", sessionId)
+    .single()
+
+  if (error || !data) return null
+  if (data.revoked_at) return null
+  if (new Date(data.expires_at).getTime() < Date.now()) return null
+
+  return {
+    splitId: data.split_id as string,
+    sessionId,
+    csrfToken: data.csrf_token as string,
+    expiresAt: data.expires_at as string,
+  }
 }
 
 /**
@@ -35,23 +60,13 @@ export async function createManageSession(splitId: string) {
  * آخر (CSRF) — لذلك تُفرض مطابقة csrf_token المُعاد من الجلسة كرأس مخصّص،
  * وهو ما لا يستطيع موقع خارجي إرفاقه تلقائيًا (بخلاف الكوكي نفسه).
  */
-export async function validateManageSession(req: NextRequest): Promise<{ splitId: string } | null> {
-  const sessionId = req.cookies.get(MANAGE_COOKIE)?.value
+export async function validateManageSession(req: NextRequest): Promise<ManageSession | null> {
   const csrfHeader = req.headers.get(CSRF_HEADER)
-  if (!sessionId || !csrfHeader) return null
+  if (!csrfHeader) return null
 
-  const { data, error } = await getSupabaseAdmin()
-    .from("manage_sessions")
-    .select("split_id, csrf_token, expires_at, revoked_at")
-    .eq("id", sessionId)
-    .single()
-
-  if (error || !data) return null
-  if (data.revoked_at) return null
-  if (new Date(data.expires_at).getTime() < Date.now()) return null
-  if (data.csrf_token !== csrfHeader) return null
-
-  return { splitId: data.split_id as string }
+  const session = await loadSessionFromCookie(req)
+  if (!session || session.csrfToken !== csrfHeader) return null
+  return session
 }
 
 /**
@@ -60,21 +75,6 @@ export async function validateManageSession(req: NextRequest): Promise<{ splitId
  * (لا نولّده من جديد) ليستطيع العميل استئناف الجلسة دون إعادة زيارة الرابط
  * الأصلي، طالما الكوكي لم تنتهِ صلاحيتها بعد.
  */
-export async function resumeManageSessionFromCookie(
-  req: NextRequest
-): Promise<{ splitId: string; csrfToken: string } | null> {
-  const sessionId = req.cookies.get(MANAGE_COOKIE)?.value
-  if (!sessionId) return null
-
-  const { data, error } = await getSupabaseAdmin()
-    .from("manage_sessions")
-    .select("split_id, csrf_token, expires_at, revoked_at")
-    .eq("id", sessionId)
-    .single()
-
-  if (error || !data) return null
-  if (data.revoked_at) return null
-  if (new Date(data.expires_at).getTime() < Date.now()) return null
-
-  return { splitId: data.split_id as string, csrfToken: data.csrf_token as string }
+export async function resumeManageSessionFromCookie(req: NextRequest): Promise<ManageSession | null> {
+  return loadSessionFromCookie(req)
 }
