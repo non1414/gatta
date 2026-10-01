@@ -3,8 +3,20 @@ import { getSupabaseAdmin } from "./supabaseAdmin"
 
 export const MANAGE_COOKIE = "gatta_manage_session"
 export const CSRF_HEADER = "x-csrf-token"
+export const SPLIT_HEADER = "x-gatta-split"
 const SESSION_TTL_SECONDS = 8 * 60 * 60 // 8 ساعات
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SPLIT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+export function isValidSplitId(splitId: unknown): splitId is string {
+  return typeof splitId === "string" && SPLIT_ID_RE.test(splitId)
+}
+
+// كوكي مستقلة لكل قطّة: منظّم يدير أكثر من قطّة في المتصفح نفسه يحتفظ بجلسة
+// كلٍّ منها، ولا تُعرض لوحة قطّة تحت رابط قطّة أخرى أبدًا.
+export function manageCookieName(splitId: string) {
+  return `${MANAGE_COOKIE}_${splitId}`
+}
 
 export type ManageSession = { splitId: string; sessionId: string; csrfToken: string; expiresAt: string }
 
@@ -32,8 +44,13 @@ export async function createManageSession(splitId: string) {
   return { sessionId: data.id as string, csrfToken, expiresAt, ttlSeconds: SESSION_TTL_SECONDS }
 }
 
+// الطلب يسمّي القطّة التي يقصدها (رأس SPLIT_HEADER)، والجلسة تُقبل فقط إن كانت
+// لتلك القطّة بعينها — لا يكفي وجود جلسة صالحة لقطّة أخرى في المتصفح نفسه.
 async function loadSessionFromCookie(req: NextRequest): Promise<ManageSession | null> {
-  const sessionId = req.cookies.get(MANAGE_COOKIE)?.value
+  const requestedSplitId = req.headers.get(SPLIT_HEADER)
+  if (!isValidSplitId(requestedSplitId)) return null
+
+  const sessionId = req.cookies.get(manageCookieName(requestedSplitId))?.value
   if (!sessionId || !UUID_RE.test(sessionId)) return null
 
   const { data, error } = await getSupabaseAdmin()
@@ -43,6 +60,7 @@ async function loadSessionFromCookie(req: NextRequest): Promise<ManageSession | 
     .single()
 
   if (error || !data) return null
+  if (data.split_id !== requestedSplitId) return null
   if (data.revoked_at) return null
   if (new Date(data.expires_at).getTime() < Date.now()) return null
 

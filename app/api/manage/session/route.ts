@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseAdmin } from "@/app/lib/supabaseAdmin"
-import { createManageSession, manageCookieOptions, MANAGE_COOKIE } from "@/app/lib/manageSession"
+import { createManageSession, manageCookieOptions, manageCookieName, isValidSplitId } from "@/app/lib/manageSession"
 import { readJsonObject, badRequest } from "@/app/lib/manageRouteHelpers"
 
 /**
@@ -12,10 +12,7 @@ export async function POST(req: NextRequest) {
   const body = await readJsonObject(req)
   const splitId = body?.splitId
   const manageToken = body?.manageToken
-  if (
-    typeof splitId !== "string" || typeof manageToken !== "string" ||
-    !splitId || !manageToken || splitId.length > 100 || manageToken.length > 200
-  ) {
+  if (!isValidSplitId(splitId) || typeof manageToken !== "string" || !manageToken || manageToken.length > 200) {
     return badRequest()
   }
 
@@ -42,6 +39,6 @@ export async function POST(req: NextRequest) {
   const { sessionId, csrfToken, expiresAt, ttlSeconds } = session
 
   const res = NextResponse.json({ ok: true, csrfToken, splitId, expiresAt, ttlSeconds })
-  res.cookies.set(MANAGE_COOKIE, sessionId, manageCookieOptions())
+  res.cookies.set(manageCookieName(splitId), sessionId, manageCookieOptions())
   return res
 }

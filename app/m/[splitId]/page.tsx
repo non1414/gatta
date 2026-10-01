@@ -12,6 +12,8 @@ import { isOrganizerDevice, markOrganizerDevice } from "@/app/lib/clientSecrets"
 import { MAX_PEOPLE, MAX_NAME_LENGTH, MAX_BANK_NAME_LENGTH } from "@/app/lib/validation"
 
 const CSRF_HEADER = "x-csrf-token"
+// كل طلب إدارة يسمّي قطّته؛ الخادم يرفض جلسة أي قطّة أخرى (app/lib/manageSession.ts)
+const SPLIT_HEADER = "x-gatta-split"
 
 type Phase = "loading" | "ok" | "locked" | "error"
 // no_session: لا جلسة ولا رابط · invalid_link: رابط/توكن مرفوض · expired: جلسة كانت فعّالة وانتهت
@@ -88,7 +90,7 @@ export default function ManagePage() {
 
   const loadView = useCallback(async (withCsrf?: string, onUnauthorized: LockReason = "expired") => {
     const res = await fetch("/api/manage/view", {
-      headers: withCsrf ? { [CSRF_HEADER]: withCsrf } : {},
+      headers: withCsrf ? { [SPLIT_HEADER]: splitId, [CSRF_HEADER]: withCsrf } : { [SPLIT_HEADER]: splitId },
     })
     if (res.status === 401) {
       lock(onUnauthorized)
@@ -112,7 +114,7 @@ export default function ManagePage() {
       if (!csrfToken) throw new Error("unauthorized")
       const res = await fetch(`/api/manage/${path}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", [CSRF_HEADER]: csrfToken },
+        headers: { "Content-Type": "application/json", [SPLIT_HEADER]: splitId, [CSRF_HEADER]: csrfToken },
         body: JSON.stringify(body),
       })
       if (res.status === 401) {
@@ -123,7 +125,7 @@ export default function ManagePage() {
       if (!res.ok) throw new Error(json?.error ?? "server_error")
       return json
     },
-    [csrfToken, lock]
+    [csrfToken, lock, splitId]
   )
 
   // فشل إجراء: رسالة عربية واضحة. انتهاء الجلسة لا يحتاج رسالة — الشاشة نفسها تتبدّل.
@@ -172,7 +174,7 @@ export default function ManagePage() {
   // ناجحة + تنبيه خفيف. انتهاء الجلسة (401): شاشة الاسترجاع، بلا إعادة محاولة.
   const refreshView = useCallback(async () => {
     if (phase !== "ok" || !csrfToken) return
-    const res = await fetch("/api/manage/view", { headers: { [CSRF_HEADER]: csrfToken } })
+    const res = await fetch("/api/manage/view", { headers: { [SPLIT_HEADER]: splitId, [CSRF_HEADER]: csrfToken } })
     if (res.status === 401) {
       lock("expired")
       return
@@ -183,7 +185,7 @@ export default function ManagePage() {
     if (!bankEditsDirty.current) {
       setBankEdits({ name: json.data.bank_name ?? "", iban: json.data.iban ?? "" })
     }
-  }, [phase, csrfToken, lock])
+  }, [phase, csrfToken, lock, splitId])
 
   usePolling(refreshView, {
     intervalMs: 10000,
