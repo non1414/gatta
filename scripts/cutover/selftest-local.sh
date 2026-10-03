@@ -179,6 +179,23 @@ check "05 repair recorded migrations 1–10 (migration 1 recorded, never execute
 run "REPAIR MIGRATIONS local-$REH\n" "$DIR/05-repair-and-status.sh" repair --target local --db $REH
 check "05 repair is safe to repeat" "$RC/$(sql $REH "select count(*) from supabase_migrations.schema_migrations")" "0/10"
 
+echo "── 08 follow-up migration 11 on the cut-over copy"
+run "" "$DIR/08-apply-followup.sh" --target production --ref hpvnfagypijegcmyqjmy --host x
+check "08 refuses gatta-test" "$RC" "1"
+LEG_EMPTY="$(sql $REH "select m.split_id from members m join splits s on s.id = m.split_id where s.manage_token_hash is null and m.status = 'empty' limit 1")"
+set +e; PRE="$(psql -X -q -t -A -d $REH -c "set role anon; select member_id from join_split('$LEG_EMPTY', 'دخيل', gen_random_uuid(), 'x')" 2>&1)"; set -e
+check "before 11: a legacy empty seat CAN be taken by a direct call (the bug)" "$(echo "$PRE" | grep -cE '^[0-9a-f-]{36}$|^[a-z0-9-]+$' )" "1"
+psql -X -q -d $REH -c "update members set name = '', status = 'empty', participant_token_hash = null where id = '$(echo "$PRE" | tail -1)'; delete from join_requests where member_id = '$(echo "$PRE" | tail -1)';" >/dev/null
+run "nope\n" "$DIR/08-apply-followup.sh" --target local --db $REH
+check "08: wrong phrase changes nothing" "$RC/$(sql $REH "select count(*) from supabase_migrations.schema_migrations where version = '00000000000011'")" "1/0"
+run "APPLY FOLLOWUP local-$REH\n" "$DIR/08-apply-followup.sh" --target local --db $REH
+check "08 applied 11, verified before/after, legacy rows unchanged, recorded" "$RC/$(echo "$OUT" | grep -c 'legacy split rows unchanged')/$(sql $REH "select count(*) from supabase_migrations.schema_migrations where version = '00000000000011'")" "0/1/1"
+set +e; POST="$(psql -X -q -t -A -d $REH -c "set role anon; select member_id from join_split('$LEG_EMPTY', 'دخيل', gen_random_uuid(), 'x')" 2>&1)"; set -e
+echo "$POST" | grep -q "split_read_only" && ok "after 11: the same direct call is rejected (split_read_only)" || bad "legacy join after 11" "$POST"
+check "after 11: new-style splits still join" "$(sql $REH "set role anon; select is_new from join_split((select split_id from create_split(gen_random_uuid(), 'نوف', repeat('c',64), 'بعد 11', 9000, 3, now() + interval '1 day', false)), 'محمد', gen_random_uuid(), 'tok')")" "t"
+run "APPLY FOLLOWUP local-$REH\n" "$DIR/08-apply-followup.sh" --target local --db $REH
+check "08 is safe to re-run (nothing to do)" "$RC/$(echo "$OUT" | grep -c 'Nothing to do')" "0/1"
+
 echo "── 07 rollback, then lock again"
 # a verification that cannot run, or a database that is not locked, must never read as "verified"
 run "" "$DIR/05-repair-and-status.sh" status --target local --db $PROD

@@ -307,6 +307,60 @@ begin
   raise notice 'PASS: إصدار رابط جديد يوقف القديم ويُبطل الجلسات الأخرى فقط، ولا يمنح القطّات القديمة إدارة';
 end $$;
 
+-- ── 12) القطّات القديمة للقراءة فقط حتى عبر طلب مباشر (ترحيل 11) ───────────────
+do $$
+declare
+  v_legacy text; v_before text; v_after text; v_err text; v_res record;
+  v_split text; v_m text; v_code text; v_new text;
+begin
+  select id into v_legacy from splits
+  where manage_token_hash is null and exists (select 1 from members where split_id = splits.id and status = 'empty')
+  order by id limit 1;
+  if v_legacy is null then raise exception 'FAIL: لا توجد قطّة قديمة بمقعد فارغ للاختبار'; end if;
+
+  select md5(string_agg(m::text, '|' order by m.id)) || md5(s::text) into v_before
+  from members m, splits s where m.split_id = v_legacy and s.id = v_legacy group by s.*;
+
+  begin
+    perform join_split(v_legacy, 'دخيل', gen_random_uuid(), 'secret-legacy');
+    raise exception 'FAIL: join_split قبِل الانضمام لقطّة قديمة';
+  exception when others then
+    if sqlerrm <> 'split_read_only' then raise; end if;
+  end;
+
+  select * into v_res from claim_seat_by_code(v_legacy, 'ANYCODE1', 'secret-legacy');
+  if v_res.success or v_res.error_code <> 'split_read_only' then
+    raise exception 'FAIL: claim_seat_by_code على قطّة قديمة أعاد % / %', v_res.success, v_res.error_code;
+  end if;
+
+  select md5(string_agg(m::text, '|' order by m.id)) || md5(s::text) into v_after
+  from members m, splits s where m.split_id = v_legacy and s.id = v_legacy group by s.*;
+  if v_after <> v_before then raise exception 'FAIL: تغيّرت بيانات القطّة القديمة'; end if;
+
+  -- القطّات الجديدة: الانضمام والاسترجاع بالرمز يعملان كما كانا
+  select split_id into v_split from create_split(
+    gen_random_uuid(), 'نوف', 'tok-legacy-guard', 'فحص الحماية', 6000, 3, now() + interval '1 day', false);
+  select member_id into v_new from join_split(v_split, 'محمد', gen_random_uuid(), 'secret-new');
+  if v_new is null then raise exception 'FAIL: الانضمام لقطّة جديدة لم يعمل'; end if;
+
+  v_m := admin_add_member(v_split, 'ليلى');
+  v_code := admin_issue_claim_code(v_m);
+  select * into v_res from claim_seat_by_code(v_split, v_code, 'secret-claim-new');
+  if not v_res.success or v_res.member_id <> v_m then
+    raise exception 'FAIL: الاسترجاع بالرمز على قطّة جديدة لم يعمل (% / %)', v_res.success, v_res.error_code;
+  end if;
+
+  -- معرّف غير موجود: السلوك السابق بلا تغيير
+  begin
+    perform join_split('no-such-split', 'س', gen_random_uuid(), 'x');
+    raise exception 'FAIL: join_split قبِل قطّة غير موجودة';
+  exception when others then
+    if sqlerrm <> 'split_full' then raise; end if;
+  end;
+
+  raise notice 'PASS: القطّات القديمة ترفض الانضمام والاسترجاع بلا أي تغيير في بياناتها، والقطّات الجديدة تعمل كما كانت';
+end $$;
+
 \echo '=================================================='
 \echo ' كل الفحوص التي وصلت هنا نجحت (psql كان سيتوقف عند أول FAIL)'
 \echo '=================================================='
