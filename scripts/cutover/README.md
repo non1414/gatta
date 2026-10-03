@@ -29,7 +29,7 @@ new one (functions + admin sessions), with a rehearsal on a copy of production d
 | `01-backup-readonly.sh` | No | CSV export of every public table, with row-count and checksum verification |
 | `02-capture-state.sh` | No | Schema, RLS, policies, grants, functions, default privileges, splits still in use; also a `schema-recreate.sql` for the rehearsal |
 | `06-rollback-prepare.sh` | No (offline) | Builds `rollback-restore-access.sql` from the captured state |
-| `03-apply-additive.sh` | Yes | Migrations 2, 3, 5, 6, 7, 8, 9 (+ bank columns if missing). The old site keeps working |
+| `03-apply-additive.sh` | Yes | Aligns production column types (`sql/00-pre-additive.sql`), migrations 2, 3, 5, 6, 7, 8, 9, then closes every new table/function to the public key (`sql/90-post-additive-hardening.sql`). The old site keeps working |
 | `04-apply-lockdown.sh` | Yes | Migrations 4, 10, then 3 again. **The old site stops working.** Ends with a verification |
 | `05-repair-and-status.sh status` | No | Migration history + lockdown verification + row counts vs. backup |
 | `05-repair-and-status.sh repair` | Bookkeeping only | Records migrations 1–10 as applied |
@@ -39,6 +39,22 @@ new one (functions + admin sessions), with a rehearsal on a copy of production d
 
 `<host>` is the **Session pooler** host shown under *Connect* in the Supabase dashboard
 (looks like `aws-0-<region>.pooler.supabase.com`); each project has its own.
+
+## Production schema differences (captured 2026-10-03)
+
+Production was not created by migration 1: `splits.id`, `members.id` and `members.split_id`
+are `uuid`, and `splits.event_at` is `text` (all 295 values UTC ISO-8601, `…Z`). Migration 2
+cannot be created on that schema, so `sql/00-pre-additive.sql` converts those four columns
+first, inside the same transaction:
+
+- ids `uuid → text` (same characters; the foreign key is re-created with `ON DELETE CASCADE`);
+- `event_at text → timestamptz` (same instant; refuses if any value lacks a `Z` timezone);
+- a fingerprint of every row is compared before and after — any difference rolls back.
+
+It is a no-op on databases built from migration 1 (gatta-test). `fee_per_person integer`,
+nullable `members.name` and the extra columns `organizer_id` / `added_by_organizer` are left
+as they are. The permissive "Allow all (temporary)" policies stay; once the public key has no
+table privileges they have no effect, and keeping them keeps the rollback a pure re-grant.
 
 ## Rehearsal (do this first)
 

@@ -29,23 +29,36 @@ refused() { local name="$1"; shift; run "" "$@"; if [ "$RC" -ne 0 ] && echo "$OU
 pg_isready -q || bash "$ROOT/scripts/db-test/setup-local-postgres.sh" >/dev/null
 PROD=gatta_fakeprod; REH=gatta_fakerehearsal
 
-echo "── building a fake 'old production' database ($PROD) and an empty rehearsal database ($REH)"
+echo "── building a fake production database ($PROD) that mirrors the captured production schema, and an empty rehearsal database ($REH)"
+# Mirrors backups/.../state/schema-recreate.sql of the real production project (2026-10-03):
+# uuid ids, event_at as TEXT ('…Z'), integer fee_per_person, nullable members.name, two extra columns,
+# RLS on with "Allow all (temporary)" policies, full public-key grants, open default privileges.
+S1=11111111-1111-4111-8111-111111111111; S2=22222222-2222-4222-8222-222222222222; SGAP=33333333-3333-4333-8333-333333333333
+M1A=aaaaaaaa-0000-4000-8000-000000000001; M1B=aaaaaaaa-0000-4000-8000-000000000002
 dropdb --if-exists $PROD; dropdb --if-exists $REH; createdb $PROD; createdb $REH
 for d in $PROD $REH; do psql -X -q -d $d -c "create schema if not exists extensions;" \
   -c "alter default privileges in schema public grant all on tables to anon, authenticated; alter default privileges in schema public grant execute on functions to anon, authenticated;"; done
-psql -X -q -d $PROD <<'SQL'
-create table splits (id text primary key, title text not null, total numeric not null, people integer not null default 2,
-  fee_per_person numeric not null default 0, event_at timestamptz not null, created_at bigint not null);
-create table members (id text primary key, split_id text not null references splits(id), name text not null default '',
-  paid boolean not null default false, created_at bigint not null);
-insert into splits (id, title, total, people, event_at, created_at) values
-  ('old-1', 'رحلة أبها', 1200, 4, now() + interval '3 days', 1),
-  ('old-2', E'عشاء, "تخرج"\nسطر ثانٍ', 450.50, 3, now() - interval '40 days', 2);
+psql -X -q -d $PROD -v S1=$S1 -v S2=$S2 -v M1A=$M1A -v M1B=$M1B <<'SQL'
+create table splits (id uuid default gen_random_uuid() not null primary key, title text not null, total numeric not null,
+  people integer not null, fee_per_person integer not null, event_at text not null, created_at bigint not null,
+  bank_name text, iban text, organizer_id uuid);
+create table members (id uuid default gen_random_uuid() not null primary key, split_id uuid not null references splits(id) on delete cascade,
+  name text, paid boolean default false not null, created_at bigint default ((extract(epoch from now()) * (1000)::numeric))::bigint not null,
+  added_by_organizer boolean default false);
+create index members_split_id_idx on members (split_id);
+alter table splits enable row level security; alter table members enable row level security;
+create policy "Allow all (temporary)" on splits as permissive for all to public using (true) with check (true);
+create policy "Allow all (temporary)" on members as permissive for all to public using (true) with check (true);
+insert into splits (id, title, total, people, fee_per_person, event_at, created_at, iban) values
+  (:'S1', 'رحلة أبها', 1200, 4, 0, '2026-11-20T07:11:00.000Z', 1, 'SA4420000001234567891234'),
+  (:'S2', E'عشاء, "تخرج"\nسطر ثانٍ', 450.50, 3, 0, '2026-03-05T17:00:00.000Z', 2, null);
 insert into members (id, split_id, name, paid, created_at) values
-  ('old-1-a','old-1','نوف',true,1), ('old-1-b','old-1','سارة',false,1), ('old-1-c','old-1','',false,1), ('old-1-d','old-1','',false,1),
-  ('old-2-a','old-2','بدر',true,2), ('old-2-b','old-2','',false,2), ('old-2-c','old-2','',false,2);
+  (:'M1A', :'S1', 'نوف', true, 1), (:'M1B', :'S1', 'سارة', false, 1),
+  (gen_random_uuid(), :'S1', '', false, 1), (gen_random_uuid(), :'S1', null, false, 1),
+  (gen_random_uuid(), :'S2', 'بدر', true, 2), (gen_random_uuid(), :'S2', '', false, 2), (gen_random_uuid(), :'S2', null, false, 2);
 SQL
 check "fake production: the public key reads tables directly (like the live site)" "$(sql $PROD "set role anon; select count(*) from splits")" "2"
+check "fake production has production's types (uuid ids, text event_at)" "$(sql $PROD "select data_type from information_schema.columns where table_name='splits' and column_name in ('id','event_at') order by column_name")" "$(printf 'text\nuuid')"
 
 echo "── safety refusals (no database is contacted for these)"
 refused "gatta-test ref is refused"                         "$DIR/01-backup-readonly.sh" --target production --ref hpvnfagypijegcmyqjmy --host x
@@ -65,7 +78,7 @@ run "" "$DIR/01-backup-readonly.sh" --target local --db $PROD
 B="$(echo "$OUT" | sed -n 's/^✅ Backup complete (read-only): //p')"
 [ -n "$B" ] && [ -f "$B/splits.csv" ] && ok "01 wrote splits.csv and members.csv" || bad "01 backup" "$(echo "$OUT" | tail -2)"
 check "01 row counts recorded" "$(tr '\n' ' ' < "$B/counts.txt")" "members=7 splits=2 "
-check "01 keeps awkward text intact (comma, quotes, newline in a title)" "$(python3 -c 'import csv,sys; print([r["title"] for r in csv.DictReader(open(sys.argv[1], newline=""))][1])' "$B/splits.csv")" "$(printf 'عشاء, "تخرج"\nسطر ثانٍ')"
+check "01 keeps awkward text intact (comma, quotes, newline in a title)" "$(python3 -c 'import csv,sys; print([r["title"] for r in csv.DictReader(open(sys.argv[1], newline="")) if r["id"] == sys.argv[2]][0])' "$B/splits.csv" "$S2")" "$(printf 'عشاء, "تخرج"\nسطر ثانٍ')"
 check "01 changed nothing in the source" "$(sql $PROD "select (select count(*) from splits) || '/' || (select count(*) from members)")" "2/7"
 case "$B" in "$ROOT"/backups/*) ok "backup folder is under backups/ (git-ignored)";; *) bad "backup folder location" "$B";; esac
 check "backups/ is ignored by git" "$(cd "$ROOT" && git check-ignore -q "$B/splits.csv" && echo ignored)" "ignored"
@@ -73,11 +86,14 @@ check "backups/ is ignored by git" "$(cd "$ROOT" && git check-ignore -q "$B/spli
 echo "── 02 capture state (read-only) + 06 rollback prepare (offline)"
 run "" "$DIR/02-capture-state.sh" --target local --db $PROD --dir "$B"
 [ "$RC" -eq 0 ] && [ -f "$B/state/summary.txt" ] && ok "02 captured state" || bad "02 capture" "$(echo "$OUT" | tail -3)"
-grep -q "splits.bank_name / splits.iban exist   : NO" "$B/state/summary.txt" && ok "02 reports the missing bank columns" || bad "02 bank-column report"
+grep -q "splits.bank_name / splits.iban exist   : yes" "$B/state/summary.txt" && ok "02 reports the bank columns" || bad "02 bank-column report"
+grep -q "splits.id: is uuid, expected text" "$B/state/summary.txt" && grep -q "splits.event_at: is text, expected timestamp with time zone" "$B/state/summary.txt" && ! grep -q "fee_per_person" "$B/state/summary.txt" \
+  && ok "02 reports the uuid/text differences, and not the harmless integer fee column" || bad "02 type-difference report" "$(grep -A7 'column types' "$B/state/summary.txt")"
+grep -q "Allow all (temporary)" "$B/state/policies.csv" && ok "02 captured the permissive policies" || bad "02 policies"
 grep -q "public key can SELECT splits directly  : yes" "$B/state/summary.txt" && ok "02 reports the open table access" || bad "02 open-access report"
 grep -q "default privileges hand NEW functions to the public key: yes" "$B/state/summary.txt" && ok "02 reports open default privileges" || bad "02 default-privilege report"
 run "" "$DIR/06-rollback-prepare.sh" --dir "$B"
-grep -q "alter table public.splits disable row level security;" "$B/rollback-restore-access.sql" && grep -q "grant select on public.members to anon;" "$B/rollback-restore-access.sql" \
+grep -q "row level security was already ENABLED" "$B/rollback-restore-access.sql" && grep -q "grant select on public.members to anon;" "$B/rollback-restore-access.sql" \
   && ok "06 built rollback SQL from the captured state" || bad "06 rollback prepare" "$(echo "$OUT" | tail -3)"
 
 echo "── read-only scripts on a database whose splits.event_at is TEXT (as on real production)"
@@ -104,7 +120,6 @@ check "02 completes when event_at is text, even with unparseable values" "$RC" "
 check "02 lists the splits still in use by date, without casting (future + recent only)" "$(python3 -c 'import csv,sys; print(",".join(sorted(r["id"] for r in csv.DictReader(open(sys.argv[1], newline="")))))' "$BT/state/active_splits.csv")" "t-future,t-recent"
 grep -q "splits.event_at: is text, expected timestamp with time zone" "$BT/state/summary.txt" && ok "02 flags the column-type difference up front" || bad "02 type-difference report" "$(grep -A3 'column types' "$BT/state/summary.txt" | tail -3)"
 check "02 records the stored date shapes with digits masked (no real values)" "$(grep -c '9999-99-99T99:99:99' "$BT/state/event_at_formats.csv")/$(grep -c '2026' "$BT/state/event_at_formats.csv" || true)" "2/0"
-grep -q "  none" "$B/state/summary.txt" && ok "02 reports no type differences on the timestamp-typed database" || bad "02 false type difference" "$(grep -A3 'column types' "$B/state/summary.txt" | tail -3)"
 check "02 changed nothing in the text-typed database" "$(sql $TXT "select (select count(*) from splits) || '/' || (select count(*) from members) || '/' || (select data_type from information_schema.columns where table_name='splits' and column_name='event_at')")" "5/2/text"
 dropdb $TXT; rm -rf "$BT"
 
@@ -123,12 +138,21 @@ run "nope\n" "$DIR/03-apply-additive.sh" --target local --db $REH
 check "03: wrong phrase cancels, schema unchanged" "$RC/$(sql $REH "select count(*) from information_schema.columns where table_name='splits' and column_name='manage_token_hash'")" "1/0"
 run "APPLY ADDITIVE local-$REH\n" "$DIR/03-apply-additive.sh" --target local --db $REH
 check "03 applied (exit 0)" "$RC" "0"
-check "03 added the missing bank columns" "$(sql $REH "select count(*) from information_schema.columns where table_name='splits' and column_name in ('bank_name','iban')")" "2"
+echo "$OUT" | grep -E '^   (splits\.|row fingerprints)' | sed 's/^/        /' || true
+check "03 converted the types (text ids, timestamptz event_at)" "$(sql $REH "select string_agg(table_name || '.' || column_name || '=' || data_type, ' ' order by table_name, column_name) from information_schema.columns where table_schema='public' and ((table_name='splits' and column_name in ('id','event_at')) or (table_name='members' and column_name in ('id','split_id')))")" "members.id=text members.split_id=text splits.event_at=timestamp with time zone splits.id=text"
+check "03 verified identical row fingerprints before/after" "$(echo "$OUT" | grep -c 'row fingerprints identical')" "1"
+check "03 kept the foreign key with ON DELETE CASCADE" "$(sql $REH "select pg_get_constraintdef(oid) from pg_constraint where conrelid='public.members'::regclass and contype='f'")" "FOREIGN KEY (split_id) REFERENCES splits(id) ON DELETE CASCADE"
+check "03 preserved ids and the exact event instant" "$(sql $REH "select id || ' ' || to_char(event_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') from splits where id = '$S1'")" "$S1 2026-11-20T07:11:00.000Z"
+check "03 kept all rows (incl. null names) and the extra columns" "$(sql $REH "select (select count(*) from splits) || '/' || (select count(*) from members) || '/' || (select count(*) from members where name is null) || '/' || (select count(*) from information_schema.columns where column_name in ('organizer_id','added_by_organizer'))")" "2/7/2/2"
 check "03 did not run migration 1 (no fake 'legacy-1' rows)" "$(sql $REH "select count(*) from splits where id like 'legacy-%'")" "0"
-check "after 03 the OLD site still works: public key can still read and write tables" "$(sql $REH "set role anon; update members set paid = true where id = 'old-1-b' returning 'updated'")" "updated"
+check "after 03 the OLD site still works: public key can still read and write tables" "$(sql $REH "set role anon; update members set paid = true where id = '$M1B' returning 'updated'")" "updated"
 check "after 03 existing splits are flagged legacy with halalas filled" "$(sql $REH "select count(*) from splits where manage_token_hash is null and total_halalas = round(total*100)")" "2"
-# the old site keeps creating data between the additive step and the lockdown
-psql -X -q -d $REH -c "set role anon; insert into splits (id, title, total, people, fee_per_person, event_at, created_at) values ('gap-1','أُنشئت بعد الخطوة 3', 300, 2, 0, now() + interval '1 day', 3); insert into members (id, split_id, name, paid, created_at) values ('gap-1-a','gap-1','ريم',true,3), ('gap-1-b','gap-1','',false,3);"
+check "after 03 the NEW tables are closed to the public key (no session ids readable in the window)" "$(sql $REH "select has_table_privilege('anon','public.manage_sessions','select') or has_table_privilege('anon','public.claim_codes','select')")" "f"
+set +e; DENIED="$(psql -X -q -d $REH -c "set role anon; select get_manage_view('$S1')" 2>&1)"; set -e
+echo "$DENIED" | grep -q "permission denied" && ok "after 03 admin functions are closed to the public key (despite open default privileges)" || bad "admin functions in the window" "$DENIED"
+check "after 03 the new site's public flow works (create_split as the public key)" "$(sql $REH "set role anon; select is_new from create_split(gen_random_uuid(), 'نوف', repeat('b',64), 'نافذة', 9000, 3, now() + interval '1 day', true)")" "t"
+# the old site keeps creating data between the additive step and the lockdown — exactly as it does today
+psql -X -q -d $REH -c "set role anon; insert into splits (id, title, total, people, fee_per_person, event_at, created_at) values ('$SGAP','أُنشئت بعد الخطوة 3', 300, 2, 0, '2026-12-01T18:00:00.000Z', 3); insert into members (id, split_id, name, paid, created_at) values ('44444444-4444-4444-8444-444444444441', '$SGAP', 'ريم', true, 3), ('44444444-4444-4444-8444-444444444442', '$SGAP', '', false, 3);"
 run "APPLY ADDITIVE local-$REH\n" "$DIR/03-apply-additive.sh" --target local --db $REH
 check "03 refuses an accidental second run" "$RC" "1"
 
@@ -141,16 +165,17 @@ set +e; DENIED="$(psql -X -q -d $REH -c "set role anon; select count(*) from spl
 echo "$DENIED" | grep -q "permission denied" && ok "after 04 the public key cannot read tables" || bad "table lockdown" "$DENIED"
 set +e; DENIED="$(psql -X -q -d $REH -c "set role anon; select admin_set_organizer_paid('x', true)" 2>&1)"; set -e
 echo "$DENIED" | grep -q "permission denied" && ok "after 04 the public key cannot call admin functions (despite open default privileges)" || bad "function lockdown" "$DENIED"
-check "after 04 the public flow still works through functions" "$(sql $REH "set role anon; select title from get_split('old-1')")" "رحلة أبها"
-check "rows the old site wrote AFTER step 03 were converted by the re-run backfill" "$(sql $REH "select string_agg(status, ',' order by id) from members where split_id = 'gap-1'")/$(sql $REH "select status from members where id = 'old-1-b'")/$(sql $REH "select total_halalas from splits where id='gap-1'")" "legacy_paid,empty/legacy_paid/30000"
-check "no data lost: every original row still present" "$(sql $REH "select (select count(*) from splits) || '/' || (select count(*) from members)")" "3/9"
+check "after 04 the public flow still works through functions (legacy split readable, read-only)" "$(sql $REH "set role anon; select title || '/' || is_legacy from get_split('$S1')")" "رحلة أبها/true"
+check "rows the old site wrote AFTER step 03 were converted by the re-run backfill" "$(sql $REH "select string_agg(status, ',' order by id) from members where split_id = '$SGAP'")/$(sql $REH "select status from members where id = '$M1B'")/$(sql $REH "select total_halalas from splits where id='$SGAP'")" "legacy_paid,empty/legacy_paid/30000"
+check "null-name legacy seats are shown as empty seats" "$(sql $REH "select string_agg(distinct status, ',') from members where name is null")" "empty"
+check "no data lost: every original row still present" "$(sql $REH "select (select count(*) from splits where manage_token_hash is null) || '/' || (select count(*) from members m join splits s on s.id = m.split_id where s.manage_token_hash is null)")" "3/9"
 check "a new-version split can be created and managed after lockdown" "$(sql $REH "set role anon; select is_new from create_split(gen_random_uuid(), 'نوف', repeat('a',64), 'جديدة', 9000, 3, now() + interval '1 day', true)")" "t"
 
 echo "── 05 status / repair"
 run "" "$DIR/05-repair-and-status.sh" status --target local --db $REH --dir "$B"
 check "05 status runs read-only and reports all 7 checks passing" "$RC/$(echo "$OUT" | grep -c '^  PASS  ')/$(echo "$OUT" | grep -c '^  FAIL' || true)" "0/7/0"
 run "REPAIR MIGRATIONS local-$REH\n" "$DIR/05-repair-and-status.sh" repair --target local --db $REH
-check "05 repair recorded migrations 1–10 (migration 1 recorded, never executed)" "$RC/$(sql $REH "select count(*) || '/' || min(version) || '/' || max(version) from supabase_migrations.schema_migrations")/$(sql $REH "select count(*) from splits where id like 'legacy-%'")" "0/10/00000000000001/00000000000010/0"
+check "05 repair recorded migrations 1–10 (migration 1 recorded, never executed)" "$RC/$(sql $REH "select count(*) || '/' || min(version) || '/' || max(version) from supabase_migrations.schema_migrations")/$(sql $REH "select count(*) from splits where title = 'رحلة أبها القديمة'")" "0/10/00000000000001/00000000000010/0"
 run "REPAIR MIGRATIONS local-$REH\n" "$DIR/05-repair-and-status.sh" repair --target local --db $REH
 check "05 repair is safe to repeat" "$RC/$(sql $REH "select count(*) from supabase_migrations.schema_migrations")" "0/10"
 
@@ -165,10 +190,25 @@ run "" "$DIR/05-repair-and-status.sh" status --target local --db $REH
 NOT_LOCKED="$(echo "$OUT" | grep -c '^  FAIL  ' || true)"
 [ "$NOT_LOCKED" -ge 1 ] && ok "after a rollback, status reports the database as NOT locked ($NOT_LOCKED failing checks)" || bad "status after rollback" "no FAIL lines"
 check "07 rollback restores the old site's direct access" "$RC/$(sql $REH "set role anon; select count(*) from splits where manage_token_hash is null")" "0/3"
+check "after rollback the old site can write again (insert with a uuid-string id)" "$(sql $REH "set role anon; insert into splits (id, title, total, people, fee_per_person, event_at, created_at) values (gen_random_uuid()::text, 'بعد التراجع', 10, 2, 0, '2026-12-24T10:00:00.000Z', 9) returning 'inserted'")" "inserted"
 run "LOCKDOWN local-$REH\n" "$DIR/04-apply-lockdown.sh" --target local --db $REH
 check "04 can be applied again after a rollback (idempotent) and verifies" "$RC/$(echo "$OUT" | grep -c '^  PASS  ')/$(echo "$OUT" | grep -c '^  FAIL' || true)" "0/7/0"
 
-check "fake production database was never modified by any script" "$(sql $PROD "select (select count(*) from splits) || '/' || (select count(*) from members) || '/' || (select count(*) from information_schema.columns where table_name='splits')")" "2/7/7"
+check "fake production database was never modified by any script" "$(sql $PROD "select (select count(*) from splits) || '/' || (select count(*) from members) || '/' || (select count(*) from information_schema.columns where table_name='splits') || '/' || (select data_type from information_schema.columns where table_name='splits' and column_name='id')")" "2/7/10/uuid"
+
+echo "── alignment safety: no-op on a migration-1 schema, refusal on an unexpected date format"
+ALN=gatta_align; dropdb --if-exists $ALN; createdb $ALN
+psql -X -q -d $ALN -c "create schema extensions;" -f "$ROOT/supabase/migrations/00000000000001_baseline_legacy_schema.sql" -c "grant all on splits, members to anon, authenticated;" >/dev/null
+run "APPLY ADDITIVE local-$ALN\n" "$DIR/03-apply-additive.sh" --target local --db $ALN
+check "03 on an already-aligned (gatta-test-shaped) schema: alignment is a no-op, step succeeds" "$RC/$(echo "$OUT" | grep -c 'schema already aligned')" "0/1"
+dropdb $ALN; createdb $ALN
+psql -X -q -d $ALN -c "create schema extensions;
+  create table splits (id uuid primary key default gen_random_uuid(), title text not null, total numeric not null, people integer not null, fee_per_person integer not null, event_at text not null, created_at bigint not null);
+  create table members (id uuid primary key default gen_random_uuid(), split_id uuid not null references splits(id) on delete cascade, name text, paid boolean not null default false, created_at bigint not null);
+  insert into splits (title, total, people, fee_per_person, event_at, created_at) values ('ok', 10, 2, 0, '2026-01-01T10:00:00.000Z', 1), ('local time, no Z', 10, 2, 0, '2026-01-01T10:00:00', 2);"
+run "APPLY ADDITIVE local-$ALN\n" "$DIR/03-apply-additive.sh" --target local --db $ALN
+check "03 refuses (and rolls back) when an event_at value has no timezone" "$RC/$(echo "$OUT" | grep -c 'not UTC ISO-8601')/$(sql $ALN "select data_type from information_schema.columns where table_name='splits' and column_name='id'")/$(sql $ALN "select count(*) from information_schema.columns where table_name='splits' and column_name='manage_token_hash'")" "1/1/uuid/0"
+dropdb $ALN
 dropdb $PROD; dropdb $REH; rm -rf "$B"
 echo
 echo "TOTAL $((PASS+FAILED)) | pass $PASS | fail $FAILED"
